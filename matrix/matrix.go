@@ -1,7 +1,7 @@
 package matrix
 
 import (
-	"github.com/nomad-software/screensaver/screen/saver/digital_rain/matrix/column"
+	"github.com/nomad-software/matrix/matrix/column"
 )
 
 // Matrix is the type that controls all matrix logic.
@@ -21,7 +21,7 @@ func New(width int, height int) *Matrix {
 	}
 
 	for i := 0; i < width; i++ {
-		m.columns[i] = column.NewColumn(height)
+		m.columns[i] = column.NewColumn(width, height)
 	}
 
 	return m
