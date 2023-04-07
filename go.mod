@@ -2,7 +2,10 @@ module github.com/nomad-software/matrix
 
 go 1.20
 
-require github.com/gdamore/tcell v1.4.0
+require (
+	github.com/gdamore/tcell v1.4.0
+	github.com/nomad-software/screensaver v0.0.0-20230219131755-0fe260e6e68e
+)
 
 require (
 	github.com/gdamore/encoding v1.0.0 // indirect

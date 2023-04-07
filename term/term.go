@@ -4,8 +4,8 @@ import (
 	"github.com/gdamore/tcell"
 	"github.com/nomad-software/matrix/char"
 	"github.com/nomad-software/matrix/cli"
-	"github.com/nomad-software/matrix/matrix"
 	"github.com/nomad-software/matrix/output"
+	"github.com/nomad-software/screensaver/screen/saver/digital_rain/matrix"
 )
 
 // Term is the main terminal.

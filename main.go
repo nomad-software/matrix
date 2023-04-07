@@ -4,8 +4,8 @@ import (
 	"time"
 
 	"github.com/nomad-software/matrix/cli"
-	"github.com/nomad-software/matrix/matrix"
 	"github.com/nomad-software/matrix/term"
+	"github.com/nomad-software/screensaver/screen/saver/digital_rain/matrix"
 )
 
 func main() {
