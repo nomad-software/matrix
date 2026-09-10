@@ -8,11 +8,13 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"golang.org/x/text/encoding"
 	"golang.org/x/text/encoding/internal"
 	"golang.org/x/text/encoding/internal/enctest"
 	"golang.org/x/text/transform"
+	"golang.org/x/text/unicode/norm"
 )
 
 func dec(e encoding.Encoding) (dir string, t transform.Transformer, err error) {
@@ -126,7 +128,7 @@ func TestNonRepertoire(t *testing.T) {
 	}
 	for _, tc := range testCases {
 		dir, tr, wantErr := tc.init(tc.e)
-		t.Run(fmt.Sprintf("%s/%v/%q", dir, tc.e, tc.src), func(t *testing.T) {
+		t.Run(fmt.Sprintf("%s/%v/%q", dir, tc.e, shortNFC(tc.src)), func(t *testing.T) {
 			dst := make([]byte, 100000)
 			src := []byte(tc.src)
 			for i := 0; i <= len(tc.src); i++ {
@@ -145,6 +147,17 @@ func TestNonRepertoire(t *testing.T) {
 			}
 		})
 	}
+}
+
+func shortNFC(s string) string {
+	s = norm.NFC.String(s)
+	if len(s) <= 50 {
+		return s
+	}
+	var i int
+	for i = 1; i < utf8.UTFMax && !utf8.RuneStart(s[50-i]); i++ {
+	}
+	return s[:50-i] + "…"
 }
 
 func TestCorrect(t *testing.T) {

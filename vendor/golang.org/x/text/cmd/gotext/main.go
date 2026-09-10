@@ -16,7 +16,6 @@ import (
 	"go/build"
 	"go/format"
 	"io"
-	"io/ioutil"
 	"log"
 	"os"
 	"strings"
@@ -24,6 +23,8 @@ import (
 	"text/template"
 	"unicode"
 	"unicode/utf8"
+
+	"golang.org/x/text/message/pipeline"
 
 	"golang.org/x/text/language"
 	"golang.org/x/tools/go/buildutil"
@@ -33,16 +34,47 @@ func init() {
 	flag.Var((*buildutil.TagsFlag)(&build.Default.BuildTags), "tags", buildutil.TagsFlagDoc)
 }
 
-var dir = flag.String("dir", "locales", "default subdirectory to store translation files")
+var (
+	lang      *string
+	out       *string
+	overwrite *bool
+
+	srcLang = flag.String("srclang", "en-US", "the source-code language")
+	dir     = flag.String("dir", "locales", "default subdirectory to store translation files")
+)
+
+func config() (*pipeline.Config, error) {
+	tag, err := language.Parse(*srcLang)
+	if err != nil {
+		return nil, wrap(err, "invalid srclang")
+	}
+
+	// Use a default value since rewrite and extract don't have an out flag.
+	genFile := ""
+	if out != nil {
+		genFile = *out
+	}
+
+	return &pipeline.Config{
+		SourceLanguage:      tag,
+		Supported:           getLangs(),
+		TranslationsPattern: `messages\.(.*)\.json$`,
+		GenFile:             genFile,
+		Dir:                 *dir,
+	}, nil
+}
 
 // NOTE: the Command struct is copied from the go tool in core.
 
 // A Command is an implementation of a go command
 // like go build or go fix.
 type Command struct {
+	// Init initializes the flag set of the command.
+	Init func(cmd *Command)
+
 	// Run runs the command.
 	// The args are the arguments after the command name.
-	Run func(cmd *Command, args []string) error
+	Run func(cmd *Command, c *pipeline.Config, args []string) error
 
 	// UsageLine is the one-line usage message.
 	// The first word in the line is taken to be the command name.
@@ -83,6 +115,7 @@ func (c *Command) Runnable() bool {
 // Commands lists the available commands and help topics.
 // The order here is the order in which they are printed by 'go help'.
 var commands = []*Command{
+	cmdUpdate,
 	cmdExtract,
 	cmdRewrite,
 	cmdGenerate,
@@ -121,10 +154,15 @@ func main() {
 
 	for _, cmd := range commands {
 		if cmd.Name() == args[0] && cmd.Runnable() {
+			cmd.Init(cmd)
 			cmd.Flag.Usage = func() { cmd.Usage() }
 			cmd.Flag.Parse(args[1:])
 			args = cmd.Flag.Args()
-			if err := cmd.Run(cmd, args); err != nil {
+			config, err := config()
+			if err != nil {
+				fatalf("gotext: %+v", err)
+			}
+			if err := cmd.Run(cmd, config, args); err != nil {
 				fatalf("gotext: %+v", err)
 			}
 			exit()
@@ -147,7 +185,7 @@ The commands are:
 {{range .}}{{if .Runnable}}
 	{{.Name | printf "%-11s"}} {{.Short}}{{end}}{{end}}
 
-Use "go help [command]" for more information about a command.
+Use "gotext help [command]" for more information about a command.
 
 Additional help topics:
 {{range .}}{{if not .Runnable}}
@@ -157,7 +195,7 @@ Use "gotext help [topic]" for more information about that topic.
 
 `
 
-var helpTemplate = `{{if .Runnable}}usage: go {{.UsageLine}}
+var helpTemplate = `{{if .Runnable}}usage: gotext {{.UsageLine}}
 
 {{end}}{{.Long | trim}}
 `
@@ -166,7 +204,7 @@ var documentationTemplate = `{{range .}}{{if .Short}}{{.Short | capitalize}}
 
 {{end}}{{if .Runnable}}Usage:
 
-	go {{.UsageLine}}
+	gotext {{.UsageLine}}
 
 {{end}}{{.Long | trim}}
 
@@ -287,7 +325,7 @@ func help(args []string) {
 			if err != nil {
 				logf("Could not format generated docs: %v\n", err)
 			}
-			if err := ioutil.WriteFile("doc.go", b, 0666); err != nil {
+			if err := os.WriteFile("doc.go", b, 0666); err != nil {
 				logf("Could not create file alldocs.go: %v\n", err)
 			}
 		} else {
@@ -304,11 +342,14 @@ func help(args []string) {
 		}
 	}
 
-	fmt.Fprintf(os.Stderr, "Unknown help topic %#q.  Run 'go help'.\n", arg)
+	fmt.Fprintf(os.Stderr, "Unknown help topic %#q.  Run 'gotext help'.\n", arg)
 	os.Exit(2) // failed at 'go help cmd'
 }
 
 func getLangs() (tags []language.Tag) {
+	if lang == nil {
+		return []language.Tag{language.AmericanEnglish}
+	}
 	for _, t := range strings.Split(*lang, ",") {
 		if t == "" {
 			continue

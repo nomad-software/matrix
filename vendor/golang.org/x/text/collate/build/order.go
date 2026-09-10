@@ -26,7 +26,7 @@ const (
 // entry is used to keep track of a single entry in the collation element table
 // during building. Examples of entries can be found in the Default Unicode
 // Collation Element Table.
-// See http://www.unicode.org/Public/UCA/6.0.0/allkeys.txt.
+// See https://www.unicode.org/Public/UCA/6.0.0/allkeys.txt.
 type entry struct {
 	str    string // same as string(runes)
 	runes  []rune
@@ -308,7 +308,7 @@ func makeRootOrdering() ordering {
 	return o
 }
 
-// patchForInsert eleminates entries from the list with more than one collation element.
+// patchForInsert eliminates entries from the list with more than one collation element.
 // The next and prev fields of the eliminated entries still point to appropriate
 // values in the newly created list.
 // It requires that sort has been called.

@@ -2,12 +2,12 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// +build ignore
+//go:build ignore
 
 package main
 
 // This file generates data for the CLDR plural rules, as defined in
-//    http://unicode.org/reports/tr35/tr35-numbers.html#Language_Plural_Rules
+//    https://unicode.org/reports/tr35/tr35-numbers.html#Language_Plural_Rules
 //
 // We assume a slightly simplified grammar:
 //
@@ -63,9 +63,9 @@ import (
 	"strconv"
 	"strings"
 
-	"golang.org/x/text/internal"
 	"golang.org/x/text/internal/gen"
-	"golang.org/x/text/language"
+	"golang.org/x/text/internal/language"
+	"golang.org/x/text/internal/language/compact"
 	"golang.org/x/text/unicode/cldr"
 )
 
@@ -198,7 +198,7 @@ func genPlurals(w *gen.CodeWriter, data *cldr.CLDR) {
 
 		rules := []pluralCheck{}
 		index := []byte{0}
-		langMap := map[int]byte{0: 0} // From compact language index to index
+		langMap := map[compact.ID]byte{0: 0}
 
 		for _, pRules := range plurals.PluralRules {
 			// Parse the rules.
@@ -251,7 +251,7 @@ func genPlurals(w *gen.CodeWriter, data *cldr.CLDR) {
 				if strings.TrimSpace(loc) == "" {
 					continue
 				}
-				lang, ok := language.CompactIndex(language.MustParse(loc))
+				lang, ok := compact.FromTag(language.MustParse(loc))
 				if !ok {
 					log.Printf("No compact index for locale %q", loc)
 				}
@@ -261,13 +261,25 @@ func genPlurals(w *gen.CodeWriter, data *cldr.CLDR) {
 		}
 		w.WriteVar(plurals.Type+"Rules", rules)
 		w.WriteVar(plurals.Type+"Index", index)
-		// Expand the values.
-		langToIndex := make([]byte, language.NumCompactTags)
+		// Expand the values: first by using the parent relationship.
+		langToIndex := make([]byte, compact.NumCompactTags)
 		for i := range langToIndex {
-			for p := i; ; p = int(internal.Parent[p]) {
+			for p := compact.ID(i); ; p = p.Parent() {
 				if x, ok := langMap[p]; ok {
 					langToIndex[i] = x
 					break
+				}
+			}
+		}
+		// Now expand by including entries with identical languages for which
+		// one isn't set.
+		for i, v := range langToIndex {
+			if v == 0 {
+				id, _ := compact.FromTag(language.Tag{
+					LangID: compact.ID(i).Tag().LangID,
+				})
+				if p := langToIndex[id]; p != 0 {
+					langToIndex[i] = p
 				}
 			}
 		}
@@ -346,15 +358,16 @@ var operandIndex = map[string]opID{
 // the resulting or conditions to conds.
 //
 // Example rules:
-//   // Category "one" in English: only allow 1 with no visible fraction
-//   i = 1 and v = 0 @integer 1
 //
-//   // Category "few" in Czech: all numbers with visible fractions
-//   v != 0   @decimal ...
+//	// Category "one" in English: only allow 1 with no visible fraction
+//	i = 1 and v = 0 @integer 1
 //
-//   // Category "zero" in Latvian: all multiples of 10 or the numbers 11-19 or
-//   // numbers with a fraction 11..19 and no trailing zeros.
-//   n % 10 = 0 or n % 100 = 11..19 or v = 2 and f % 100 = 11..19 @integer ...
+//	// Category "few" in Czech: all numbers with visible fractions
+//	v != 0   @decimal ...
+//
+//	// Category "zero" in Latvian: all multiples of 10 or the numbers 11-19 or
+//	// numbers with a fraction 11..19 and no trailing zeros.
+//	n % 10 = 0 or n % 100 = 11..19 or v = 2 and f % 100 = 11..19 @integer ...
 //
 // @integer and @decimal are followed by examples and are not relevant for the
 // rule itself. The are used here to signal the termination of the rule.

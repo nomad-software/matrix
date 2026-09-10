@@ -10,11 +10,14 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"unicode/utf8"
 
-	"golang.org/x/text/internal/testtext"
 	"golang.org/x/text/transform"
 )
 
@@ -103,7 +106,7 @@ var cgj = GraphemeJoiner
 
 var decomposeSegmentTests = []PositionTest{
 	// illegal runes
-	{"\xC2", 0, ""},
+	{"\xC2", 1, ""},
 	{"\xC0", 1, "\xC0"},
 	{"\u00E0\x80", 2, "\u0061\u0300"},
 	// starter
@@ -119,7 +122,7 @@ var decomposeSegmentTests = []PositionTest{
 	{grave(31), 60, grave(30) + cgj},
 	{"a" + grave(31), 61, "a" + grave(30) + cgj},
 
-	// Stability tests: see http://www.unicode.org/review/pr-29.html.
+	// Stability tests: see https://www.unicode.org/review/pr-29.html.
 	// U+0300 COMBINING GRAVE ACCENT;Mn;230;NSM;;;;;N;NON-SPACING GRAVE;;;;
 	// U+0B47 ORIYA VOWEL SIGN E;Mc;0;L;;;;;N;;;;;
 	// U+0B3E ORIYA VOWEL SIGN AA;Mc;0;L;;;;;N;;;;;
@@ -138,7 +141,7 @@ var decomposeSegmentTests = []PositionTest{
 	// U+FF9E is a starter, but decomposes to U+3099, which is not.
 	{grave(30) + "\uff9e", 60, grave(30) + cgj},
 	// ends with incomplete UTF-8 encoding
-	{"\xCC", 0, ""},
+	{"\xCC", 1, ""},
 	{"\u0300\xCC", 2, "\u0300"},
 }
 
@@ -437,7 +440,7 @@ var quickSpanNFCTests = []spanTest{
 	{"abc\u00C0", true, 5, nil},
 	// correctly ordered combining characters
 	// TODO: b may combine with modifiers, which is why this fails. We could
-	// make a more precise test that that actually checks whether last
+	// make a more precise test that actually checks whether last
 	// characters combines. Probably not worth it.
 	{"ab\u0300", true, 1, transform.ErrEndOfSpan},
 	{"ab\u0300cd", true, 1, transform.ErrEndOfSpan},
@@ -463,7 +466,7 @@ var quickSpanNFCTests = []spanTest{
 func runSpanTests(t *testing.T, name string, f Form, testCases []spanTest) {
 	for i, tc := range testCases {
 		s := fmt.Sprintf("Bytes/%s/%d=%+q/atEOF=%v", name, i, pc(tc.input), tc.atEOF)
-		ok := testtext.Run(t, s, func(t *testing.T) {
+		ok := t.Run(s, func(t *testing.T) {
 			n, err := f.Span([]byte(tc.input), tc.atEOF)
 			if n != tc.n || err != tc.err {
 				t.Errorf("\n got %d, %v;\nwant %d, %v", n, err, tc.n, tc.err)
@@ -473,7 +476,7 @@ func runSpanTests(t *testing.T, name string, f Form, testCases []spanTest) {
 			continue // Don't do the String variant if the Bytes variant failed.
 		}
 		s = fmt.Sprintf("String/%s/%d=%+q/atEOF=%v", name, i, pc(tc.input), tc.atEOF)
-		testtext.Run(t, s, func(t *testing.T) {
+		t.Run(s, func(t *testing.T) {
 			n, err := f.SpanString(tc.input, tc.atEOF)
 			if n != tc.n || err != tc.err {
 				t.Errorf("\n got %d, %v;\nwant %d, %v", n, err, tc.n, tc.err)
@@ -661,6 +664,11 @@ var appendTestsNFC = []AppendTest{
 		"a" + rep(0x0305, maxNonStarters+4) + "\u0316",
 		"a" + rep(0x0305, maxNonStarters) + cgj + "\u0316" + rep(0x305, 4),
 	},
+	{ // illegal rune
+		"",
+		"\xf3\xcc\x80",
+		"\xf3\xcc\x80",
+	},
 
 	{ // Combine across non-blocking non-starters.
 		// U+0327 COMBINING CEDILLA;Mn;202;NSM;;;;;N;NON-SPACING CEDILLA;;;;
@@ -674,7 +682,7 @@ var appendTestsNFC = []AppendTest{
 		"\u1161\u11a8",
 	},
 
-	// Stability tests: see http://www.unicode.org/review/pr-29.html.
+	// Stability tests: see https://www.unicode.org/review/pr-29.html.
 	{"", "\u0b47\u0300\u0b3e", "\u0b47\u0300\u0b3e"},
 	{"", "\u1100\u0300\u1161", "\u1100\u0300\u1161"},
 	{"", "\u0b47\u0b3e", "\u0b4b"},
@@ -920,6 +928,31 @@ func TestString(t *testing.T) {
 	})
 }
 
+func runNM(code string) (string, error) {
+	// Write the file.
+	tmpdir, err := os.MkdirTemp(os.TempDir(), "normalize_test")
+	if err != nil {
+		return "", fmt.Errorf("failed to create tmpdir: %v", err)
+	}
+	defer os.RemoveAll(tmpdir)
+	goTool := filepath.Join(runtime.GOROOT(), "bin", "go")
+	filename := filepath.Join(tmpdir, "main.go")
+	if err := os.WriteFile(filename, []byte(code), 0644); err != nil {
+		return "", fmt.Errorf("failed to write main.go: %v", err)
+	}
+	outputFile := filepath.Join(tmpdir, "main")
+
+	// Build the binary.
+	out, err := exec.Command(goTool, "build", "-o", outputFile, filename).CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("failed to execute command: %v", err)
+	}
+
+	// Get the symbols.
+	out, err = exec.Command(goTool, "tool", "nm", outputFile).CombinedOutput()
+	return string(out), err
+}
+
 func TestLinking(t *testing.T) {
 	const prog = `
 	package main
@@ -927,15 +960,21 @@ func TestLinking(t *testing.T) {
 	import "golang.org/x/text/unicode/norm"
 	func main() { fmt.Println(norm.%s) }
 	`
-	baseline, errB := testtext.CodeSize(fmt.Sprintf(prog, "MaxSegmentSize"))
-	withTables, errT := testtext.CodeSize(fmt.Sprintf(prog, `NFC.String("")`))
+
+	baseline, errB := runNM(fmt.Sprintf(prog, "MaxSegmentSize"))
+	withTables, errT := runNM(fmt.Sprintf(prog, `NFC.String("")`))
 	if errB != nil || errT != nil {
-		t.Skipf("code size failed: %v and %v", errB, errT)
+		t.Skipf("TestLinking failed: %v and %v", errB, errT)
 	}
-	// Tables are at least 50K
-	if d := withTables - baseline; d < 50*1024 {
-		t.Errorf("tables appear not to be dropped: %d - %d = %d",
-			withTables, baseline, d)
+
+	symbols := []string{"norm.formTable", "norm.nfkcValues", "norm.decomps"}
+	for _, symbol := range symbols {
+		if strings.Contains(baseline, symbol) {
+			t.Errorf("found: %q unexpectedly", symbol)
+		}
+		if !strings.Contains(withTables, symbol) {
+			t.Errorf("didn't find: %q unexpectedly", symbol)
+		}
 	}
 }
 
@@ -1182,7 +1221,7 @@ func BenchmarkOverflow(b *testing.B) {
 var overflow = string(bytes.Repeat([]byte("\u035D"), 4096)) + "\u035B"
 
 // Tests sampled from the Canonical ordering tests (Part 2) of
-// http://unicode.org/Public/UNIDATA/NormalizationTest.txt
+// https://unicode.org/Public/UNIDATA/NormalizationTest.txt
 const txt_canon = `\u0061\u0315\u0300\u05AE\u0300\u0062 \u0061\u0300\u0315\u0300\u05AE\u0062
 \u0061\u0302\u0315\u0300\u05AE\u0062 \u0061\u0307\u0315\u0300\u05AE\u0062
 \u0061\u0315\u0300\u05AE\u030A\u0062 \u0061\u059A\u0316\u302A\u031C\u0062

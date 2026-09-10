@@ -7,11 +7,11 @@ package execabs
 import (
 	"context"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -20,7 +20,7 @@ import (
 // Copied from internal/testenv.HasExec
 func hasExec() bool {
 	switch runtime.GOOS {
-	case "js", "ios":
+	case "wasip1", "js", "ios":
 		return false
 	}
 	return true
@@ -57,17 +57,13 @@ func TestCommand(t *testing.T) {
 		func(s string) *Cmd { return Command(s) },
 		func(s string) *Cmd { return CommandContext(context.Background(), s) },
 	} {
-		tmpDir, err := ioutil.TempDir("", "execabs-test")
-		if err != nil {
-			t.Fatalf("ioutil.TempDir failed: %s", err)
-		}
-		defer os.RemoveAll(tmpDir)
+		tmpDir := t.TempDir()
 		executable := "execabs-test"
 		if runtime.GOOS == "windows" {
 			executable += ".exe"
 		}
-		if err = ioutil.WriteFile(filepath.Join(tmpDir, executable), []byte{1, 2, 3}, 0111); err != nil {
-			t.Fatalf("ioutil.WriteFile failed: %s", err)
+		if err := os.WriteFile(filepath.Join(tmpDir, executable), []byte{1, 2, 3}, 0111); err != nil {
+			t.Fatal(err)
 		}
 		cwd, err := os.Getwd()
 		if err != nil {
@@ -87,7 +83,7 @@ func TestCommand(t *testing.T) {
 		expectedErr := fmt.Sprintf("execabs-test resolves to executable in current directory (.%c%s)", filepath.Separator, executable)
 		if err = cmd("execabs-test").Run(); err == nil {
 			t.Fatalf("Command.Run didn't fail when exec.LookPath returned a relative path")
-		} else if err.Error() != expectedErr {
+		} else if err.Error() != expectedErr && !isGo119ErrDot(err) {
 			t.Errorf("Command.Run returned unexpected error: want %q, got %q", expectedErr, err.Error())
 		}
 	}
@@ -96,17 +92,13 @@ func TestCommand(t *testing.T) {
 func TestLookPath(t *testing.T) {
 	mustHaveExec(t)
 
-	tmpDir, err := ioutil.TempDir("", "execabs-test")
-	if err != nil {
-		t.Fatalf("ioutil.TempDir failed: %s", err)
-	}
-	defer os.RemoveAll(tmpDir)
+	tmpDir := t.TempDir()
 	executable := "execabs-test"
 	if runtime.GOOS == "windows" {
 		executable += ".exe"
 	}
-	if err = ioutil.WriteFile(filepath.Join(tmpDir, executable), []byte{1, 2, 3}, 0111); err != nil {
-		t.Fatalf("ioutil.WriteFile failed: %s", err)
+	if err := os.WriteFile(filepath.Join(tmpDir, executable), []byte{1, 2, 3}, 0111); err != nil {
+		t.Fatal(err)
 	}
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -128,5 +120,16 @@ func TestLookPath(t *testing.T) {
 		t.Fatalf("LookPath didn't fail when finding a non-relative path")
 	} else if err.Error() != expectedErr {
 		t.Errorf("LookPath returned unexpected error: want %q, got %q", expectedErr, err.Error())
+	}
+}
+
+// Issue #58606
+func TestDoesNotExist(t *testing.T) {
+	err := Command("this-executable-should-not-exist").Start()
+	if err == nil {
+		t.Fatal("command should have failed")
+	}
+	if strings.Contains(err.Error(), "resolves to executable in current directory") {
+		t.Errorf("error (%v) should not refer to current directory", err)
 	}
 }

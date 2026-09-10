@@ -11,7 +11,6 @@ import (
 	"testing"
 	"unicode"
 
-	"golang.org/x/text/internal/testtext"
 	"golang.org/x/text/language"
 	"golang.org/x/text/message"
 )
@@ -40,7 +39,7 @@ func TestValues(t *testing.T) {
 	// checkDefined checks that a value exists in a Namer.
 	checkDefined := func(x interface{}, namers []testcase) {
 		for _, n := range namers {
-			testtext.Run(t, fmt.Sprintf("%s.Name(%s)", n.kind, x), func(t *testing.T) {
+			t.Run(fmt.Sprintf("%s.Name(%s)", n.kind, x), func(t *testing.T) {
 				if n.n.Name(x) == "" {
 					// As of version 28 there is no data for az-Arab in English,
 					// although there is useful data in other languages.
@@ -382,7 +381,7 @@ func TestTag(t *testing.T) {
 				// There are inconsistencies w.r.t. capitalization in the tests
 				// due to CLDR's update procedure which treats modern and other
 				// languages differently.
-				// See http://unicode.org/cldr/trac/ticket/8051.
+				// See https://unicode.org/cldr/trac/ticket/8051.
 				// TODO: use language capitalization to sanitize the strings.
 				t.Errorf("Name(%s) = %q; want %q", tag, n, name)
 			}
@@ -449,7 +448,7 @@ func TestLanguage(t *testing.T) {
 		{"en", "sr-Latn-ME", "Serbo-Croatian"}, // See comments in TestTag.
 	}
 	for _, tt := range tests {
-		testtext.Run(t, tt.dict+"/"+tt.tag, func(t *testing.T) {
+		t.Run(tt.dict+"/"+tt.tag, func(t *testing.T) {
 			name, fmtName := splitName(tt.name)
 			dict := language.MustParse(tt.dict)
 			tag := language.Raw.MustParse(tt.tag)
@@ -609,7 +608,7 @@ func TestSelf(t *testing.T) {
 		// Take the entry for sr which has the matching script.
 		// TODO: Capitalization changed as of CLDR 26, but change seems
 		// arbitrary. Revisit capitalization with revision 27. See
-		// http://unicode.org/cldr/trac/ticket/8051.
+		// https://unicode.org/cldr/trac/ticket/8051.
 		{"sr", "српски"},
 		// TODO: sr-ME should show up as Serbian or Montenegrin, not Serbo-
 		// Croatian. This is an artifact of the current algorithm, which is the

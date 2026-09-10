@@ -1,3 +1,5 @@
 module github.com/mattn/go-runewidth
 
-go 1.9
+go 1.23
+
+require github.com/clipperhouse/uax29/v2 v2.2.0

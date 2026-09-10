@@ -100,7 +100,6 @@ func TestMerge(t *testing.T) {
 // build directives for arch{{.}}
 
 //go:build goos && arch{{.}}
-// +build goos,arch{{.}}
 
 package main
 
@@ -186,7 +185,6 @@ const (
 // build directives for arch{{.}}
 
 //go:build goos && arch{{.}}
-// +build goos,arch{{.}}
 
 package main
 
@@ -292,7 +290,7 @@ const (
 
 	// Generate source code for different "architectures"
 	var inFiles, outFiles []srcFile
-	for _, arch := range strings.Fields("A B C D") {
+	for arch := range strings.FieldsSeq("A B C D") {
 		buf := new(bytes.Buffer)
 		err := inTmpl.Execute(buf, arch)
 		if err != nil {
@@ -317,7 +315,7 @@ const (
 		expectedElems := []codeElem{
 			{token.COMMENT, "Package comments\n"},
 			{token.COMMENT, "build directives for archA\n"},
-			{token.COMMENT, "+build goos,archA\n"},
+			{token.COMMENT, "go:build goos && archA\n"},
 			{token.CONST, `COMMON_INDEPENDENT = 1234`},
 			{token.CONST, `UNIQUE_INDEPENDENT_A = "UNIQUE_INDEPENDENT_A"`},
 			{token.CONST, `COMMON_GROUP = "COMMON_GROUP"`},
@@ -500,7 +498,7 @@ func diffLines(t *testing.T, got, expected []byte) {
 func addLineNr(src []byte) []byte {
 	lines := bytes.Split(src, []byte("\n"))
 	for i, line := range lines {
-		lines[i] = []byte(fmt.Sprintf("%d: %s", i+1, line))
+		lines[i] = fmt.Appendf(nil, "%d: %s", i+1, line)
 	}
 	return bytes.Join(lines, []byte("\n"))
 }

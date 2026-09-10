@@ -52,6 +52,16 @@ func NewFreeform(opts ...Option) *Profile {
 	}
 }
 
+// NewRestrictedProfile creates a new PRECIS profile based on an existing
+// profile.
+// If the parent profile already had the Disallow option set, the new rule
+// overrides the parents rule.
+func NewRestrictedProfile(parent *Profile, disallow runes.Set) *Profile {
+	p := *parent
+	Disallow(disallow)(&p.options)
+	return &p
+}
+
 // NewTransformer creates a new transform.Transformer that performs the PRECIS
 // preparation and enforcement steps on the given UTF-8 encoded bytes.
 func (p *Profile) NewTransformer() *Transformer {
@@ -306,7 +316,7 @@ func (p *Profile) Compare(a, b string) bool {
 		return false
 	}
 
-	return bytes.Compare(akey, bkey) == 0
+	return bytes.Equal(akey, bkey)
 }
 
 // Allowed returns a runes.Set containing every rune that is a member of the
@@ -339,13 +349,13 @@ func (c *checker) Reset() {
 func (c *checker) span(src []byte, atEOF bool) (n int, err error) {
 	for n < len(src) {
 		e, sz := dpTrie.lookup(src[n:])
-		d := categoryTransitions[category(e&catMask)]
 		if sz == 0 {
 			if !atEOF {
 				return n, transform.ErrShortSrc
 			}
 			return n, errDisallowedRune
 		}
+		d := categoryTransitions[category(e&catMask)]
 		doLookAhead := false
 		if property(e) < c.p.class.validFrom {
 			if d.rule == nil {
@@ -379,6 +389,9 @@ func (c *checker) span(src []byte, atEOF bool) (n int, err error) {
 		n += sz
 	}
 	if m := c.beforeBits >> finalShift; c.beforeBits&m != m || c.termBits != 0 {
+		if !atEOF {
+			return n, transform.ErrShortSrc
+		}
 		err = errContext
 	}
 	return n, err
@@ -386,8 +399,9 @@ func (c *checker) span(src []byte, atEOF bool) (n int, err error) {
 
 // TODO: we may get rid of this transform if transform.Chain understands
 // something like a Spanner interface.
-func (c checker) Transform(dst, src []byte, atEOF bool) (nDst, nSrc int, err error) {
+func (c *checker) Transform(dst, src []byte, atEOF bool) (nDst, nSrc int, err error) {
 	short := false
+
 	if len(dst) < len(src) {
 		src = src[:len(dst)]
 		atEOF = false

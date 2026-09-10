@@ -1,4 +1,4 @@
-// Copyright 2018 Garrett D'Amore
+// Copyright 2024 Garrett D'Amore
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use file except in compliance with the License.
@@ -15,7 +15,10 @@
 package encoding
 
 import (
+	"errors"
 	"testing"
+
+	"golang.org/x/text/transform"
 )
 
 func TestUTF8(t *testing.T) {
@@ -23,7 +26,46 @@ func TestUTF8(t *testing.T) {
 	for i := 0; i < 128; i++ {
 		verifyMap(t, UTF8, byte(i), rune(i))
 	}
+}
 
-	// We need to add tests for ErrSrcShort, ErrDstShort, and
-	// larger rune values.
+func TestDstShortUTF8Decoder(t *testing.T) {
+	decoder := ISO8859_1.NewDecoder()
+
+	out := make([]byte, 1)
+	nat := []byte{0xC0} // Latin1 A grave
+
+	_, _, err := decoder.Transform(out, nat, true)
+	if err == nil {
+		t.Errorf("Passed but should not have")
+	} else if !errors.Is(err, transform.ErrShortDst) {
+		t.Errorf("Wrong error return: %v", err)
+	}
+}
+
+func TestDstShortUTF8Encoder(t *testing.T) {
+
+	encoder := UTF8.NewEncoder()
+	nat := []byte("À")
+	out := make([]byte, 1)
+        _, _, err := encoder.Transform(out, nat, true)
+        if err == nil {
+                t.Errorf("Passed but should not have")
+        } else if !errors.Is(err, transform.ErrShortDst) {
+                t.Errorf("Wrong error return: %v", err)
+        }
+}
+
+func TestSrcShortUTF8(t *testing.T) {
+	encoder := ISO8859_1.NewEncoder()
+
+	out := make([]byte, 2)
+	nat := []byte("À")
+	nat = nat[0:1]
+
+	_, _, err := encoder.Transform(out, nat, true)
+	if err == nil {
+		t.Errorf("Passed but should not have: %v", nat)
+	} else if !errors.Is(err, transform.ErrShortSrc) {
+		t.Errorf("Wrong error return: %v %v", nat, err)
+	}
 }

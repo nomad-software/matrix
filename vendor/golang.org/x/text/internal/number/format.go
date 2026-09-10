@@ -39,12 +39,7 @@ type Formatter struct {
 
 func (f *Formatter) init(t language.Tag, index []uint8) {
 	f.Info = InfoFromTag(t)
-	for ; ; t = t.Parent() {
-		if ci, ok := language.CompactIndex(t); ok {
-			f.Pattern = formats[index[ci]]
-			break
-		}
-	}
+	f.Pattern = formats[index[tagToID(t)]]
 }
 
 // InitPattern initializes a Formatter for the given Pattern.
@@ -399,9 +394,7 @@ func appendScientific(dst []byte, f *Formatter, n *Digits) (b []byte, postPre, p
 	exp := n.Exp - int32(n.Comma)
 	exponential := f.Symbol(SymExponential)
 	if exponential == "E" {
-		dst = append(dst, "\u202f"...) // NARROW NO-BREAK SPACE
 		dst = append(dst, f.Symbol(SymSuperscriptingExponent)...)
-		dst = append(dst, "\u202f"...) // NARROW NO-BREAK SPACE
 		dst = f.AppendDigit(dst, 1)
 		dst = f.AppendDigit(dst, 0)
 		switch {

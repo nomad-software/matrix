@@ -5,88 +5,20 @@
 package language
 
 import (
-	"bytes"
 	"strings"
 	"testing"
 
-	"golang.org/x/text/internal/tag"
+	"golang.org/x/text/internal/language"
 )
 
-type scanTest struct {
-	ok  bool // true if scanning does not result in an error
-	in  string
-	tok []string // the expected tokens
+// equalTags compares language, script and region subtags only.
+func (t Tag) equalTags(a Tag) bool {
+	return t.lang() == a.lang() &&
+		t.script() == a.script() &&
+		t.region() == a.region()
 }
 
-var tests = []scanTest{
-	{true, "", []string{}},
-	{true, "1", []string{"1"}},
-	{true, "en", []string{"en"}},
-	{true, "root", []string{"root"}},
-	{true, "maxchars", []string{"maxchars"}},
-	{false, "bad/", []string{}},
-	{false, "morethan8", []string{}},
-	{false, "-", []string{}},
-	{false, "----", []string{}},
-	{false, "_", []string{}},
-	{true, "en-US", []string{"en", "US"}},
-	{true, "en_US", []string{"en", "US"}},
-	{false, "en-US-", []string{"en", "US"}},
-	{false, "en-US--", []string{"en", "US"}},
-	{false, "en-US---", []string{"en", "US"}},
-	{false, "en--US", []string{"en", "US"}},
-	{false, "-en-US", []string{"en", "US"}},
-	{false, "-en--US-", []string{"en", "US"}},
-	{false, "-en--US-", []string{"en", "US"}},
-	{false, "en-.-US", []string{"en", "US"}},
-	{false, ".-en--US-.", []string{"en", "US"}},
-	{false, "en-u.-US", []string{"en", "US"}},
-	{true, "en-u1-US", []string{"en", "u1", "US"}},
-	{true, "maxchar1_maxchar2-maxchar3", []string{"maxchar1", "maxchar2", "maxchar3"}},
-	{false, "moreThan8-moreThan8-e", []string{"e"}},
-}
-
-func TestScan(t *testing.T) {
-	for i, tt := range tests {
-		scan := makeScannerString(tt.in)
-		for j := 0; !scan.done; j++ {
-			if j >= len(tt.tok) {
-				t.Errorf("%d: extra token %q", i, scan.token)
-			} else if tag.Compare(tt.tok[j], scan.token) != 0 {
-				t.Errorf("%d: token %d: found %q; want %q", i, j, scan.token, tt.tok[j])
-				break
-			}
-			scan.scan()
-		}
-		if s := strings.Join(tt.tok, "-"); tag.Compare(s, bytes.Replace(scan.b, b("_"), b("-"), -1)) != 0 {
-			t.Errorf("%d: input: found %q; want %q", i, scan.b, s)
-		}
-		if (scan.err == nil) != tt.ok {
-			t.Errorf("%d: ok: found %v; want %v", i, scan.err == nil, tt.ok)
-		}
-	}
-}
-
-func TestAcceptMinSize(t *testing.T) {
-	for i, tt := range tests {
-		// count number of successive tokens with a minimum size.
-		for sz := 1; sz <= 8; sz++ {
-			scan := makeScannerString(tt.in)
-			scan.end, scan.next = 0, 0
-			end := scan.acceptMinSize(sz)
-			n := 0
-			for i := 0; i < len(tt.tok) && len(tt.tok[i]) >= sz; i++ {
-				n += len(tt.tok[i])
-				if i > 0 {
-					n++
-				}
-			}
-			if end != n {
-				t.Errorf("%d:%d: found len %d; want %d", i, sz, end, n)
-			}
-		}
-	}
-}
+var errSyntax = language.ErrSyntax
 
 type parseTest struct {
 	i                    int // the index of this test
@@ -104,6 +36,11 @@ func parseTests() []parseTest {
 		{in: "root", lang: "und"},
 		{in: "und", lang: "und"},
 		{in: "en", lang: "en"},
+
+		{in: "en-US-u-va-posix", lang: "en", region: "US", ext: "u-va-posix"},
+		{in: "ca-ES-valencia", lang: "ca", region: "ES", variants: "valencia"},
+		{in: "en-US-u-rg-gbzzzz", lang: "en", region: "US", ext: "u-rg-gbzzzz"},
+
 		{in: "xy", lang: "und", invalid: true},
 		{in: "en-ZY", lang: "en", invalid: true},
 		{in: "gsw", lang: "gsw"},
@@ -164,13 +101,13 @@ func parseTests() []parseTest {
 		{in: "en-9-aa-0-aa-z-bb-x-a", lang: "en", extList: []string{"0-aa", "9-aa", "z-bb", "x-a"}, changed: true},
 		{in: "en-u-c", lang: "en", ext: "", invalid: true},
 		{in: "en-u-co-phonebk", lang: "en", ext: "u-co-phonebk"},
-		{in: "en-u-co-phonebk-ca", lang: "en", ext: "u-co-phonebk", invalid: true},
-		{in: "en-u-nu-arabic-co-phonebk-ca", lang: "en", ext: "u-co-phonebk-nu-arabic", invalid: true, changed: true},
-		{in: "en-u-nu-arabic-co-phonebk-ca-x", lang: "en", ext: "u-co-phonebk-nu-arabic", invalid: true, changed: true},
-		{in: "en-u-nu-arabic-co-phonebk-ca-s", lang: "en", ext: "u-co-phonebk-nu-arabic", invalid: true, changed: true},
-		{in: "en-u-nu-arabic-co-phonebk-ca-a12345678", lang: "en", ext: "u-co-phonebk-nu-arabic", invalid: true, changed: true},
-		{in: "en-u-co-phonebook", lang: "en", ext: "", invalid: true},
-		{in: "en-u-co-phonebook-cu-xau", lang: "en", ext: "u-cu-xau", invalid: true, changed: true},
+		{in: "en-u-co-phonebk-ca", lang: "en", ext: "u-ca-co-phonebk", invalid: true},
+		{in: "en-u-nu-arabic-co-phonebk-ca", lang: "en", ext: "u-ca-co-phonebk-nu-arabic", invalid: true, changed: true},
+		{in: "en-u-nu-arabic-co-phonebk-ca-x", lang: "en", ext: "u-ca-co-phonebk-nu-arabic", invalid: true, changed: true},
+		{in: "en-u-nu-arabic-co-phonebk-ca-s", lang: "en", ext: "u-ca-co-phonebk-nu-arabic", invalid: true, changed: true},
+		{in: "en-u-nu-arabic-co-phonebk-ca-a12345678", lang: "en", ext: "u-ca-co-phonebk-nu-arabic", invalid: true, changed: true},
+		{in: "en-u-co-phonebook", lang: "en", ext: "u-co", invalid: true},
+		{in: "en-u-co-phonebook-cu-xau", lang: "en", ext: "u-co-cu-xau", invalid: true, changed: true},
 		{in: "en-Cyrl-u-co-phonebk", lang: "en", script: "Cyrl", ext: "u-co-phonebk"},
 		{in: "en-US-u-co-phonebk", lang: "en", region: "US", ext: "u-co-phonebk"},
 		{in: "en-US-u-co-phonebk-cu-xau", lang: "en", region: "US", ext: "u-co-phonebk-cu-xau"},
@@ -180,11 +117,11 @@ func parseTests() []parseTest {
 		{in: "en-u-def-abc", lang: "en", ext: "u-abc-def", changed: true},
 		{in: "en-u-cu-xua-co-phonebk-a-cd", lang: "en", extList: []string{"a-cd", "u-co-phonebk-cu-xua"}, changed: true},
 		// Invalid "u" extension. Drop invalid parts.
-		{in: "en-u-cu-co-phonebk", lang: "en", extList: []string{"u-co-phonebk"}, invalid: true, changed: true},
-		{in: "en-u-cu-xau-co", lang: "en", extList: []string{"u-cu-xau"}, invalid: true},
+		{in: "en-u-cu-co-phonebk", lang: "en", extList: []string{"u-co-phonebk-cu"}, invalid: true, changed: true},
+		{in: "en-u-cu-xau-co", lang: "en", extList: []string{"u-co-cu-xau"}, invalid: true},
 		// We allow duplicate keys as the LDML spec does not explicitly prohibit it.
 		// TODO: Consider eliminating duplicates and returning an error.
-		{in: "en-u-cu-xau-co-phonebk-cu-xau", lang: "en", ext: "u-co-phonebk-cu-xau-cu-xau", changed: true},
+		{in: "en-u-cu-xau-co-phonebk-cu-xau", lang: "en", ext: "u-co-phonebk-cu-xau", changed: true},
 		{in: "en-t-en-Cyrl-NL-fonipa", lang: "en", ext: "t-en-cyrl-nl-fonipa", changed: true},
 		{in: "en-t-en-Cyrl-NL-fonipa-t0-abc-def", lang: "en", ext: "t-en-cyrl-nl-fonipa-t0-abc-def", changed: true},
 		{in: "en-t-t0-abcd", lang: "en", ext: "t-t0-abcd"},
@@ -192,6 +129,11 @@ func parseTests() []parseTest {
 		{in: "en-t-nl-abcd", lang: "en", ext: "t-nl", invalid: true},
 		{in: "en-t-nl-latn", lang: "en", ext: "t-nl-latn"},
 		{in: "en-t-t0-abcd-x-a", lang: "en", extList: []string{"t-t0-abcd", "x-a"}},
+		{in: "en_t_pt_MLt", lang: "en", ext: "t-pt-mlt", changed: true},
+		{in: "en-t-fr-est", lang: "en", ext: "t-fr-est", changed: false},
+		{in: "fr-est", lang: "et", changed: true},
+		{in: "fr-est-t-fr-est", lang: "et", ext: "t-fr-est", changed: true},
+		{in: "fr-est-Cyrl", lang: "et", script: "Cyrl", changed: true},
 		// invalid
 		{in: "", lang: "und", invalid: true},
 		{in: "-", lang: "und", invalid: true},
@@ -231,30 +173,6 @@ func parseTests() []parseTest {
 	return tests
 }
 
-func TestParseExtensions(t *testing.T) {
-	for i, tt := range parseTests() {
-		if tt.ext == "" || tt.rewrite {
-			continue
-		}
-		scan := makeScannerString(tt.in)
-		if len(scan.b) > 1 && scan.b[1] != '-' {
-			scan.end = nextExtension(string(scan.b), 0)
-			scan.next = scan.end + 1
-			scan.scan()
-		}
-		start := scan.start
-		scan.toLower(start, len(scan.b))
-		parseExtensions(&scan)
-		ext := string(scan.b[start:])
-		if ext != tt.ext {
-			t.Errorf("%d(%s): ext was %v; want %v", i, tt.in, ext, tt.ext)
-		}
-		if changed := !strings.HasPrefix(tt.in[start:], ext); changed != tt.changed {
-			t.Errorf("%d(%s): changed was %v; want %v", i, tt.in, changed, tt.changed)
-		}
-	}
-}
-
 // partChecks runs checks for each part by calling the function returned by f.
 func partChecks(t *testing.T, f func(*parseTest) (Tag, bool)) {
 	for i, tt := range parseTests() {
@@ -262,80 +180,38 @@ func partChecks(t *testing.T, f func(*parseTest) (Tag, bool)) {
 		if skip {
 			continue
 		}
-		if l, _ := getLangID(b(tt.lang)); l != tag.lang {
-			t.Errorf("%d: lang was %q; want %q", i, tag.lang, l)
+		if l, _ := language.ParseBase(tt.lang); l != tag.lang() {
+			t.Errorf("%d: lang was %q; want %q", i, tag.lang(), l)
 		}
-		if sc, _ := getScriptID(script, b(tt.script)); sc != tag.script {
-			t.Errorf("%d: script was %q; want %q", i, tag.script, sc)
+		if sc, _ := language.ParseScript(tt.script); sc != tag.script() {
+			t.Errorf("%d: script was %q; want %q", i, tag.script(), sc)
 		}
-		if r, _ := getRegionID(b(tt.region)); r != tag.region {
-			t.Errorf("%d: region was %q; want %q", i, tag.region, r)
+		if r, _ := language.ParseRegion(tt.region); r != tag.region() {
+			t.Errorf("%d: region was %q; want %q", i, tag.region(), r)
 		}
-		if tag.str == "" {
-			continue
+		v := tag.tag().Variants()
+		if v != "" {
+			v = v[1:]
 		}
-		p := int(tag.pVariant)
-		if p < int(tag.pExt) {
-			p++
+		if v != tt.variants {
+			t.Errorf("%d: variants was %q; want %q", i, v, tt.variants)
 		}
-		if s, g := tag.str[p:tag.pExt], tt.variants; s != g {
-			t.Errorf("%d: variants was %q; want %q", i, s, g)
-		}
-		p = int(tag.pExt)
-		if p > 0 && p < len(tag.str) {
-			p++
-		}
-		if s, g := (tag.str)[p:], tt.ext; s != g {
-			t.Errorf("%d: extensions were %q; want %q", i, s, g)
+		if e := strings.Join(tag.tag().Extensions(), "-"); e != tt.ext {
+			t.Errorf("%d: extensions were %q; want %q", i, e, tt.ext)
 		}
 	}
 }
 
-func TestParseTag(t *testing.T) {
-	partChecks(t, func(tt *parseTest) (id Tag, skip bool) {
-		if strings.HasPrefix(tt.in, "x-") || tt.rewrite {
-			return Tag{}, true
-		}
-		scan := makeScannerString(tt.in)
-		id, end := parseTag(&scan)
-		id.str = string(scan.b[:end])
-		tt.ext = ""
-		tt.extList = []string{}
-		return id, false
-	})
-}
-
 func TestParse(t *testing.T) {
 	partChecks(t, func(tt *parseTest) (id Tag, skip bool) {
-		id, err := Raw.Parse(tt.in)
-		ext := ""
-		if id.str != "" {
-			if strings.HasPrefix(id.str, "x-") {
-				ext = id.str
-			} else if int(id.pExt) < len(id.str) && id.pExt > 0 {
-				ext = id.str[id.pExt+1:]
-			}
-		}
-		if tag, _ := Raw.Parse(id.String()); tag.String() != id.String() {
-			t.Errorf("%d:%s: reparse was %q; want %q", tt.i, tt.in, id.String(), tag.String())
-		}
-		if ext != tt.ext {
-			t.Errorf("%d:%s: ext was %q; want %q", tt.i, tt.in, ext, tt.ext)
-		}
-		changed := id.str != "" && !strings.HasPrefix(tt.in, id.str)
-		if changed != tt.changed {
-			t.Errorf("%d:%s: changed was %v; want %v", tt.i, tt.in, changed, tt.changed)
-		}
-		if (err != nil) != tt.invalid {
-			t.Errorf("%d:%s: invalid was %v; want %v. Error: %v", tt.i, tt.in, err != nil, tt.invalid, err)
-		}
+		id, _ = Raw.Parse(tt.in)
 		return id, false
 	})
 }
 
 func TestErrors(t *testing.T) {
 	mkInvalid := func(s string) error {
-		return mkErrInvalid([]byte(s))
+		return language.NewValueError([]byte(s))
 	}
 	tests := []struct {
 		in  string
@@ -348,8 +224,8 @@ func TestErrors(t *testing.T) {
 		{"aa-AB", mkInvalid("AB")},
 		// ill-formed wins over invalid.
 		{"ac-u", errSyntax},
-		{"ac-u-ca", errSyntax},
-		{"ac-u-ca-co-pinyin", errSyntax},
+		{"ac-u-ca", mkInvalid("ac")},
+		{"ac-u-ca-co-pinyin", mkInvalid("ac")},
 		{"noob", errSyntax},
 	}
 	for _, tt := range tests {
@@ -387,8 +263,10 @@ func TestCompose2(t *testing.T) {
 		r, _ := ParseRegion(tt.region)
 		p := []interface{}{l, s, r, s, r, l}
 		for _, x := range strings.Split(tt.variants, "-") {
-			v, _ := ParseVariant(x)
-			p = append(p, v)
+			if x != "" {
+				v, _ := ParseVariant(x)
+				p = append(p, v)
+			}
 		}
 		for _, x := range tt.extList {
 			e, _ := ParseExtension(x)
@@ -445,6 +323,7 @@ func TestParseAcceptLanguage(t *testing.T) {
 		{nil, "aa;q", false},
 		{nil, "aa;q=", false},
 		{nil, "aa;q=.", false},
+		{nil, "00-t-0o", false},
 
 		// odd fallbacks
 		{
@@ -513,5 +392,18 @@ func TestParseAcceptLanguage(t *testing.T) {
 				break
 			}
 		}
+	}
+}
+
+func TestParseAcceptLanguageTooBig(t *testing.T) {
+	s := strings.Repeat("en-x-a-", 333)
+	_, _, err := ParseAcceptLanguage(s)
+	if err != language.ErrSyntax {
+		t.Errorf("ParseAcceptLanguage() unexpected error: got %v, want %v", err, language.ErrSyntax)
+	}
+	s += "en-x-a"
+	_, _, err = ParseAcceptLanguage(s)
+	if err != errTagListTooLarge {
+		t.Errorf("ParseAcceptLanguage() unexpected error: got %v, want %v", err, errTagListTooLarge)
 	}
 }

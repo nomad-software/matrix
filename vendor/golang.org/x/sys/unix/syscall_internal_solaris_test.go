@@ -3,7 +3,6 @@
 // license that can be found in the LICENSE file.
 
 //go:build solaris
-// +build solaris
 
 package unix
 
@@ -26,6 +25,40 @@ func (e *EventPort) checkInternals(t *testing.T, fds, paths, cookies, pending in
 		got := fmt.Sprintf(format, len(e.fds), len(e.paths), len(e.cookies), p)
 		t.Errorf("Internal state mismatch\nfound:    %s\nexpected: %s", got, expected)
 	}
+}
+
+// getOneRetry wraps EventPort.GetOne which in turn wraps a syscall that can be
+// interrupted causing us to receive EINTR.
+// To prevent our tests from flaking, we retry the syscall until it works
+// rather than get unexpected results in our tests.
+func getOneRetry(t *testing.T, p *EventPort, timeout *Timespec) (e *PortEvent, err error) {
+	t.Helper()
+	for {
+		e, err = p.GetOne(timeout)
+		if err != EINTR {
+			break
+		}
+	}
+	return e, err
+}
+
+// getRetry wraps EventPort.Get which in turn wraps a syscall that can be
+// interrupted causing us to receive EINTR.
+// To prevent our tests from flaking, we retry the syscall until it works
+// rather than get unexpected results in our tests.
+func getRetry(t *testing.T, p *EventPort, s []PortEvent, min int, timeout *Timespec) (n int, err error) {
+	t.Helper()
+	for {
+		n, err = p.Get(s, min, timeout)
+		if err != EINTR {
+			break
+		}
+		// If we did get EINTR, make sure we got 0 events
+		if n != 0 {
+			t.Fatalf("EventPort.Get returned events on EINTR.\ngot: %d\nexpected: 0", n)
+		}
+	}
+	return n, err
 }
 
 // Regression test for DissociatePath returning ENOENT
@@ -143,7 +176,7 @@ func TestEventPortDissociateAlreadyGone(t *testing.T) {
 	runtime.GC()
 
 	// Before the fix, this would cause a nil pointer exception
-	e, err := port.GetOne(nil)
+	e, err := getOneRetry(t, port, nil)
 	if err != nil {
 		t.Errorf("failed to get an event: %v", err)
 	}
@@ -152,7 +185,7 @@ func TestEventPortDissociateAlreadyGone(t *testing.T) {
 		t.Errorf(`expected "cookie1", got "%v"`, e.Cookie)
 	}
 	// Make sure that a cookie of the same value doesn't cause removal from the paths map incorrectly
-	e, err = port.GetOne(nil)
+	e, err = getOneRetry(t, port, nil)
 	if err != nil {
 		t.Errorf("failed to get an event: %v", err)
 	}
@@ -167,7 +200,7 @@ func TestEventPortDissociateAlreadyGone(t *testing.T) {
 	}
 	// Event has fired, but until processed it should still be in the map
 	port.checkInternals(t, 0, 1, 1, 1)
-	e, err = port.GetOne(nil)
+	e, err = getOneRetry(t, port, nil)
 	if err != nil {
 		t.Errorf("failed to get an event: %v", err)
 	}
@@ -176,4 +209,61 @@ func TestEventPortDissociateAlreadyGone(t *testing.T) {
 	}
 	// The maps should be empty and there should be no pending events
 	port.checkInternals(t, 0, 0, 0, 0)
+}
+
+// Regression test for spuriously triggering a panic about memory mismanagement
+// that can be triggered by an event processing thread trying to process an event
+// after a different thread has already called port.Close().
+// Implemented as an internal test so that we can just simulate the Close()
+// because if you call close first in the same thread, things work properly
+// anyway.
+func TestEventPortGetAfterClose(t *testing.T) {
+	port, err := NewEventPort()
+	if err != nil {
+		t.Fatalf("NewEventPort failed: %v", err)
+	}
+	// Create, associate, and delete 2 files
+	for i := 0; i < 2; i++ {
+		tmpfile, err := os.CreateTemp("", "eventport")
+		if err != nil {
+			t.Fatalf("unable to create tempfile: %v", err)
+		}
+		path := tmpfile.Name()
+		stat, err := os.Stat(path)
+		if err != nil {
+			t.Fatalf("unable to stat tempfile: %v", err)
+		}
+		err = port.AssociatePath(path, stat, FILE_MODIFIED, nil)
+		if err != nil {
+			t.Fatalf("unable to AssociatePath tempfile: %v", err)
+		}
+		err = os.Remove(path)
+		if err != nil {
+			t.Fatalf("unable to Remove tempfile: %v", err)
+		}
+	}
+	n, err := port.Pending()
+	if err != nil {
+		t.Errorf("Pending failed: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("expected 2 pending events, got %d", n)
+	}
+	// Simulate a close from a different thread
+	port.fds = nil
+	port.paths = nil
+	port.cookies = nil
+	// Ensure that we get back reasonable errors rather than panic
+	_, err = getOneRetry(t, port, nil)
+	if err == nil || err.Error() != "this EventPort is already closed" {
+		t.Errorf("didn't receive expected error of 'this EventPort is already closed'; got: %v", err)
+	}
+	events := make([]PortEvent, 2)
+	n, err = getRetry(t, port, events, 1, nil)
+	if n != 0 {
+		t.Errorf("expected to get back 0 events, got %d", n)
+	}
+	if err == nil || err.Error() != "this EventPort is already closed" {
+		t.Errorf("didn't receive expected error of 'this EventPort is already closed'; got: %v", err)
+	}
 }

@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// +build ignore
+//go:build ignore
 
 // Generator for display name tables.
 
@@ -414,7 +414,7 @@ func (b *builder) writeGroup(name string) {
 		index = index[:n]
 
 		// Workaround for a bug in CLDR 26.
-		// See http://unicode.org/cldr/trac/ticket/8042.
+		// See https://unicode.org/cldr/trac/ticket/8042.
 		if cldr.Version == "26" && sup.String() == "hsb" {
 			data = bytes.Replace(data, []byte{'"'}, nil, 1)
 		}
@@ -527,7 +527,7 @@ func (h *header) writeSingle(w *gen.CodeWriter, name string) {
 	}
 }
 
-// WriteTable writes an entry for a single Namer.
+// writeTable writes an entry for a single Namer.
 func (g *group) writeTable(w *gen.CodeWriter, name string) {
 	start := w.Size
 	writeKeys(w, name, g.toTags)

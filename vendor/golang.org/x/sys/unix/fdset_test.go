@@ -3,7 +3,6 @@
 // license that can be found in the LICENSE file.
 
 //go:build aix || darwin || dragonfly || freebsd || linux || netbsd || openbsd || solaris
-// +build aix darwin dragonfly freebsd linux netbsd openbsd solaris
 
 package unix_test
 
@@ -16,21 +15,21 @@ import (
 func TestFdSet(t *testing.T) {
 	var fdSet unix.FdSet
 	fdSet.Zero()
-	for fd := 0; fd < unix.FD_SETSIZE; fd++ {
+	for fd := range unix.FD_SETSIZE {
 		if fdSet.IsSet(fd) {
 			t.Fatalf("Zero did not clear fd %d", fd)
 		}
 		fdSet.Set(fd)
 	}
 
-	for fd := 0; fd < unix.FD_SETSIZE; fd++ {
+	for fd := range unix.FD_SETSIZE {
 		if !fdSet.IsSet(fd) {
 			t.Fatalf("IsSet(%d): expected true, got false", fd)
 		}
 	}
 
 	fdSet.Zero()
-	for fd := 0; fd < unix.FD_SETSIZE; fd++ {
+	for fd := range unix.FD_SETSIZE {
 		if fdSet.IsSet(fd) {
 			t.Fatalf("Zero did not clear fd %d", fd)
 		}
@@ -40,7 +39,7 @@ func TestFdSet(t *testing.T) {
 		fdSet.Set(fd)
 	}
 
-	for fd := 0; fd < unix.FD_SETSIZE; fd++ {
+	for fd := range unix.FD_SETSIZE {
 		if fd&0x1 == 0x1 {
 			if !fdSet.IsSet(fd) {
 				t.Fatalf("IsSet(%d): expected true, got false", fd)
@@ -56,7 +55,7 @@ func TestFdSet(t *testing.T) {
 		fdSet.Clear(fd)
 	}
 
-	for fd := 0; fd < unix.FD_SETSIZE; fd++ {
+	for fd := range unix.FD_SETSIZE {
 		if fdSet.IsSet(fd) {
 			t.Fatalf("Clear(%d) did not clear fd", fd)
 		}

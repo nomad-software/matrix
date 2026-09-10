@@ -149,6 +149,7 @@ func main() {
 `
 
 func TestLinking(t *testing.T) {
+	t.Skip("skipping flaky test; see golang.org/issue/17538")
 	base := getSize(t, `fmt.Print(currency.CLDRVersion)`)
 	symbols := getSize(t, `fmt.Print(currency.Symbol(currency.USD))`)
 	if d := symbols - base; d < 2*1024 {
@@ -165,7 +166,7 @@ func getSize(t *testing.T, main string) int {
 }
 
 func BenchmarkString(b *testing.B) {
-	for i := 0; i < b.N; i++ {
-		USD.String()
+	for b.Loop() {
+		_ = USD.String()
 	}
 }

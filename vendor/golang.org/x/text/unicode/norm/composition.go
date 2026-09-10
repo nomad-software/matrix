@@ -407,7 +407,7 @@ func decomposeHangul(buf []byte, r rune) int {
 
 // decomposeHangul algorithmically decomposes a Hangul rune into
 // its Jamo components.
-// See http://unicode.org/reports/tr15/#Hangul for details on decomposing Hangul.
+// See https://unicode.org/reports/tr15/#Hangul for details on decomposing Hangul.
 func (rb *reorderBuffer) decomposeHangul(r rune) {
 	r -= hangulBase
 	x := r % jamoTCount
@@ -420,7 +420,7 @@ func (rb *reorderBuffer) decomposeHangul(r rune) {
 }
 
 // combineHangul algorithmically combines Jamo character components into Hangul.
-// See http://unicode.org/reports/tr15/#Hangul for details on combining Hangul.
+// See https://unicode.org/reports/tr15/#Hangul for details on combining Hangul.
 func (rb *reorderBuffer) combineHangul(s, i, k int) {
 	b := rb.rune[:]
 	bn := rb.nrune
@@ -449,6 +449,16 @@ func (rb *reorderBuffer) combineHangul(s, i, k int) {
 				// ACxx plus 11Ax to LVT
 				rb.assignRune(s, l+v-jamoTBase)
 			default:
+				// Not a Hangul composition. The segment may still
+				// contain regular canonical compositions, such as
+				// combining marks following a Hangul syllable, so
+				// fall back to the composition table.
+				if b[i].combinesBackward() {
+					if combined := combine(l, v); combined != 0 {
+						rb.assignRune(s, combined)
+						continue
+					}
+				}
 				b[k] = b[i]
 				k++
 			}
@@ -461,6 +471,10 @@ func (rb *reorderBuffer) combineHangul(s, i, k int) {
 // It should only be used to recompose a single segment, as it will not
 // handle alternations between Hangul and non-Hangul characters correctly.
 func (rb *reorderBuffer) compose() {
+	// Lazily load the map used by the combine func below, but do
+	// it outside of the loop.
+	recompMapOnce.Do(buildRecompMap)
+
 	// UAX #15, section X5 , including Corrigendum #5
 	// "In any character sequence beginning with starter S, a character C is
 	//  blocked from S if and only if there is some character B between S
@@ -480,25 +494,27 @@ func (rb *reorderBuffer) compose() {
 			return
 		}
 		ii := b[i]
+		// Track the last starter unconditionally: b[i] must be blocked by
+		// any starter between it and s, even one that b[i] itself cannot
+		// combine with, and even if the runes in between never enter the
+		// combinesBackward branch below.
+		cccB := b[k-1].ccc
+		cccC := ii.ccc
+		blocked := false // b[i] blocked by starter or greater or equal CCC?
+		if cccB == 0 {
+			s = k - 1
+		} else {
+			blocked = s != k-1 && cccB >= cccC
+		}
 		// We can only use combineForward as a filter if we later
 		// get the info for the combined character. This is more
 		// expensive than using the filter. Using combinesBackward()
 		// is safe.
-		if ii.combinesBackward() {
-			cccB := b[k-1].ccc
-			cccC := ii.ccc
-			blocked := false // b[i] blocked by starter or greater or equal CCC?
-			if cccB == 0 {
-				s = k - 1
-			} else {
-				blocked = s != k-1 && cccB >= cccC
-			}
-			if !blocked {
-				combined := combine(rb.runeAt(s), rb.runeAt(i))
-				if combined != 0 {
-					rb.assignRune(s, combined)
-					continue
-				}
+		if ii.combinesBackward() && !blocked {
+			combined := combine(rb.runeAt(s), rb.runeAt(i))
+			if combined != 0 {
+				rb.assignRune(s, combined)
+				continue
 			}
 		}
 		b[k] = b[i]

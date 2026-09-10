@@ -8,7 +8,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"strconv"
 	"strings"
 	"testing"
@@ -642,13 +642,13 @@ var testCases = []testCase{
 
 func TestReader(t *testing.T) {
 	for _, tc := range testCases {
-		testtext.Run(t, tc.desc, func(t *testing.T) {
+		t.Run(tc.desc, func(t *testing.T) {
 			r := NewReader(strings.NewReader(tc.src), tc.t)
 			// Differently sized dst and src buffers are not part of the
 			// exported API. We override them manually.
 			r.dst = make([]byte, tc.dstSize)
 			r.src = make([]byte, tc.srcSize)
-			got, err := ioutil.ReadAll(r)
+			got, err := io.ReadAll(r)
 			str := string(got)
 			if str != tc.wantStr || err != tc.wantErr {
 				t.Errorf("\ngot  %q, %v\nwant %q, %v", str, err, tc.wantStr, tc.wantErr)
@@ -665,7 +665,7 @@ func TestWriter(t *testing.T) {
 			sizes = []int{tc.ioSize}
 		}
 		for _, sz := range sizes {
-			testtext.Run(t, fmt.Sprintf("%s/%d", tc.desc, sz), func(t *testing.T) {
+			t.Run(fmt.Sprintf("%s/%d", tc.desc, sz), func(t *testing.T) {
 				bb := &bytes.Buffer{}
 				w := NewWriter(bb, tc.t)
 				// Differently sized dst and src buffers are not part of the
@@ -733,7 +733,7 @@ func TestDiscard(t *testing.T) {
 	for i, tc := range testCases {
 		nDst, nSrc, err := Discard.Transform(make([]byte, tc.dstSize), []byte(tc.str), true)
 		if nDst != 0 || nSrc != len(tc.str) || err != nil {
-			t.Errorf("%d:\ngot %q, %d, %v\nwant 0, %d, nil", i, nDst, nSrc, err, len(tc.str))
+			t.Errorf("%d:\ngot %d, %d, %v\nwant 0, %d, nil", i, nDst, nSrc, err, len(tc.str))
 		}
 	}
 }
@@ -1149,7 +1149,7 @@ func testString(t *testing.T, f func(Transformer, string) (string, int, error)) 
 			// The result string will be different.
 			continue
 		}
-		testtext.Run(t, tt.desc, func(t *testing.T) {
+		t.Run(tt.desc, func(t *testing.T) {
 			got, n, err := f(tt.t, tt.src)
 			if tt.wantErr != err {
 				t.Errorf("error: got %v; want %v", err, tt.wantErr)
@@ -1193,7 +1193,7 @@ func TestAppend(t *testing.T) {
 }
 
 func TestString(t *testing.T) {
-	testtext.Run(t, "transform", func(t *testing.T) { testString(t, String) })
+	t.Run("transform", func(t *testing.T) { testString(t, String) })
 
 	// Overrun the internal destination buffer.
 	for i, s := range []string{
@@ -1211,7 +1211,7 @@ func TestString(t *testing.T) {
 		aaa[:1*initialBufSize+0] + "A",
 		aaa[:1*initialBufSize+1] + "A",
 	} {
-		testtext.Run(t, fmt.Sprint("dst buffer test using lower/", i), func(t *testing.T) {
+		t.Run(fmt.Sprint("dst buffer test using lower/", i), func(t *testing.T) {
 			got, _, _ := String(lowerCaseASCII{}, s)
 			if want := strings.ToLower(s); got != want {
 				t.Errorf("got %s (%d); want %s (%d)", got, len(got), want, len(want))
@@ -1228,7 +1228,7 @@ func TestString(t *testing.T) {
 		aaa[:2*initialBufSize+0],
 		aaa[:2*initialBufSize+1],
 	} {
-		testtext.Run(t, fmt.Sprint("src buffer test using rleEncode/", i), func(t *testing.T) {
+		t.Run(fmt.Sprint("src buffer test using rleEncode/", i), func(t *testing.T) {
 			got, _, _ := String(rleEncode{}, s)
 			if want := fmt.Sprintf("%da", len(s)); got != want {
 				t.Errorf("got %s (%d); want %s (%d)", got, len(got), want, len(want))
@@ -1246,7 +1246,7 @@ func TestString(t *testing.T) {
 		aaa[:initialBufSize+1],
 		aaa[:10*initialBufSize],
 	} {
-		testtext.Run(t, fmt.Sprint("alloc/", i), func(t *testing.T) {
+		t.Run(fmt.Sprint("alloc/", i), func(t *testing.T) {
 			if n := testtext.AllocsPerRun(5, func() { String(&lowerCaseASCIILookahead{}, s) }); n > 1 {
 				t.Errorf("#allocs was %f; want 1", n)
 			}
@@ -1315,3 +1315,26 @@ var (
 	aaa = strings.Repeat("a", 4096)
 	AAA = strings.Repeat("A", 4096)
 )
+
+type badTransformer struct{}
+
+func (bt badTransformer) Transform(dst, src []byte, atEOF bool) (nDst, nSrc int, err error) {
+	return 0, 0, ErrShortSrc
+}
+
+func (bt badTransformer) Reset() {}
+
+func TestBadTransformer(t *testing.T) {
+	bt := badTransformer{}
+	if _, _, err := String(bt, "aaa"); err != ErrShortSrc {
+		t.Errorf("String expected ErrShortSrc, got nil")
+	}
+	if _, _, err := Bytes(bt, []byte("aaa")); err != ErrShortSrc {
+		t.Errorf("Bytes expected ErrShortSrc, got nil")
+	}
+	r := NewReader(bytes.NewReader([]byte("aaa")), bt)
+	var bytes []byte
+	if _, err := r.Read(bytes); err != ErrShortSrc {
+		t.Errorf("NewReader Read expected ErrShortSrc, got nil")
+	}
+}

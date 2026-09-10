@@ -774,7 +774,7 @@ func nlTitle(c *context) bool {
 	// From CLDR:
 	// # Special titlecasing for Dutch initial "ij".
 	// ::Any-Title();
-	// # Fix up Ij at the beginning of a "word" (per Any-Title, notUAX #29)
+	// # Fix up Ij at the beginning of a "word" (per Any-Title, not UAX #29)
 	// [:^WB=ALetter:] [:WB=Extend:]* [[:WB=MidLetter:][:WB=MidNumLet:]]? { Ij } → IJ ;
 	if c.src[c.pSrc] != 'I' && c.src[c.pSrc] != 'i' {
 		return title(c)
@@ -794,7 +794,7 @@ func nlTitleSpan(c *context) bool {
 	// From CLDR:
 	// # Special titlecasing for Dutch initial "ij".
 	// ::Any-Title();
-	// # Fix up Ij at the beginning of a "word" (per Any-Title, notUAX #29)
+	// # Fix up Ij at the beginning of a "word" (per Any-Title, not UAX #29)
 	// [:^WB=ALetter:] [:WB=Extend:]* [[:WB=MidLetter:][:WB=MidNumLet:]]? { Ij } → IJ ;
 	if c.src[c.pSrc] != 'I' {
 		return isTitle(c)
@@ -808,7 +808,7 @@ func nlTitleSpan(c *context) bool {
 	return true
 }
 
-// Not part of CLDR, but see http://unicode.org/cldr/trac/ticket/7078.
+// Not part of CLDR, but see https://unicode.org/cldr/trac/ticket/7078.
 func afnlRewrite(c *context) {
 	if c.hasPrefix("'") || c.hasPrefix("’") {
 		c.isMidWord = true

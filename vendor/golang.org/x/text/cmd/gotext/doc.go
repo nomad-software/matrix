@@ -4,50 +4,47 @@
 //
 // Usage:
 //
-// 	gotext command [arguments]
+//	gotext command [arguments]
 //
 // The commands are:
 //
-// 	extract     extracts strings to be translated from code
-// 	rewrite     rewrites fmt functions to use a message Printer
-// 	generate    generates code to insert translated messages
+//	update      merge translations and generate catalog
+//	extract     extracts strings to be translated from code
+//	rewrite     rewrites fmt functions to use a message Printer
+//	generate    generates code to insert translated messages
 //
-// Use "go help [command]" for more information about a command.
+// Use "gotext help [command]" for more information about a command.
 //
 // Additional help topics:
 //
-//
 // Use "gotext help [topic]" for more information about that topic.
 //
-//
-// Extracts strings to be translated from code
-//
-// Usage:
-//
-// 	go extract <package>*
-//
-//
-//
-//
-// Rewrites fmt functions to use a message Printer
+// # Merge translations and generate catalog
 //
 // Usage:
 //
-// 	go rewrite <package>
+//	gotext update <package>* [-out <gofile>]
+//
+// # Extracts strings to be translated from code
+//
+// Usage:
+//
+//	gotext extract <package>*
+//
+// # Rewrites fmt functions to use a message Printer
+//
+// Usage:
+//
+//	gotext rewrite <package>
 //
 // rewrite is typically done once for a project. It rewrites all usages of
 // fmt to use x/text's message package whenever a message.Printer is in scope.
 // It rewrites Print and Println calls with constant strings to the equivalent
 // using Printf to allow translators to reorder arguments.
 //
-//
-// Generates code to insert translated messages
+// # Generates code to insert translated messages
 //
 // Usage:
 //
-// 	go generate <package>
-//
-//
-//
-//
+//	gotext generate <package> [-out <gofile>]
 package main

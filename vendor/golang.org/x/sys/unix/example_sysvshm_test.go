@@ -3,7 +3,6 @@
 // license that can be found in the LICENSE file.
 
 //go:build (darwin && !ios) || (linux && !android)
-// +build darwin,!ios linux,!android
 
 package unix_test
 
@@ -20,7 +19,7 @@ func ExampleSysvShmGet() {
 		log.Fatal("sysv shm create failed:", err)
 	}
 
-	// warning: sysv shared memory segments persist even after after a process
+	// warning: sysv shared memory segments persist even after a process
 	// is destroyed, so it's very important to explicitly delete it when you
 	// don't need it anymore.
 	defer func() {

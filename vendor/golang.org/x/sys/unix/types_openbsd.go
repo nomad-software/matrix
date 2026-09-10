@@ -3,7 +3,6 @@
 // license that can be found in the LICENSE file.
 
 //go:build ignore
-// +build ignore
 
 /*
 Input to cgo -godefs.  See README.md
@@ -208,8 +207,6 @@ type IfAnnounceMsghdr C.struct_if_announcemsghdr
 type RtMsghdr C.struct_rt_msghdr
 
 type RtMetrics C.struct_rt_metrics
-
-type Mclpool C.struct_mclpool
 
 // Berkeley packet filter
 

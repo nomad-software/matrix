@@ -3,7 +3,6 @@
 // license that can be found in the LICENSE file.
 
 //go:build ignore
-// +build ignore
 
 /*
 Input to cgo -godefs.  See README.md
@@ -11,6 +10,7 @@ Input to cgo -godefs.  See README.md
 
 // +godefs map struct_in_addr [4]byte /* in_addr */
 // +godefs map struct_in6_addr [16]byte /* in6_addr */
+// +godefs map struct___kernel_sockaddr_storage SockaddrStorage
 
 package unix
 
@@ -20,7 +20,23 @@ package unix
 #define _FILE_OFFSET_BITS 64
 #define _GNU_SOURCE
 
+// Ref: include/linux/time32.h
+//
+// On Linux, in order to solve the overflow problem of time_t type variables on
+// 32-bit arm, mips, and powerpc in 2038, the definition of time_t is switched
+// from a 32-bit field to a 64-bit field. For backward compatibility, we force
+// the use of 32-bit fields.
+#if defined(__ARM_EABI__) || \
+	(defined(__mips__) && (_MIPS_SIM == _ABIO32)) || \
+	(defined(__powerpc__) && (!defined(__powerpc64__)))
+# ifdef  _TIME_BITS
+#  undef _TIME_BITS
+# endif
+# define _TIME_BITS 32
+#endif
+
 #include <dirent.h>
+#include <fcntl.h>
 #include <poll.h>
 #include <sched.h>
 #include <signal.h>
@@ -30,7 +46,7 @@ package unix
 #include <utime.h>
 
 #include <netinet/in.h>
-#include <netinet/tcp.h>
+#include <linux/tcp.h>
 
 #include <sys/epoll.h>
 #include <sys/inotify.h>
@@ -38,6 +54,7 @@ package unix
 #include <sys/mman.h>
 #include <sys/mount.h>
 #include <sys/param.h>
+#include <sys/pidfd.h>
 #include <sys/ptrace.h>
 #include <sys/resource.h>
 #include <sys/select.h>
@@ -50,6 +67,7 @@ package unix
 #include <sys/timerfd.h>
 #include <sys/times.h>
 #include <sys/timex.h>
+#include <sys/types.h>
 #include <sys/un.h>
 #include <sys/user.h>
 #include <sys/utsname.h>
@@ -100,21 +118,27 @@ struct termios2 {
 #include <linux/fs.h>
 #include <linux/fsverity.h>
 #include <linux/genetlink.h>
+#include <linux/gpio.h>
 #include <linux/hdreg.h>
 #include <linux/hidraw.h>
 #include <linux/icmp.h>
 #include <linux/icmpv6.h>
+#include <linux/if_addrlabel.h>
 #include <linux/if_alg.h>
 #include <linux/if_bridge.h>
 #include <linux/if_packet.h>
 #include <linux/if_pppox.h>
+#include <linux/if_tun.h>
 #include <linux/if_xdp.h>
+#include <linux/inet_diag.h>
 #include <linux/ipc.h>
+#include <linux/ipmi.h>
 #include <linux/kcm.h>
 #include <linux/keyctl.h>
 #include <linux/landlock.h>
 #include <linux/loop.h>
 #include <linux/lwtunnel.h>
+#include <linux/mempolicy.h>
 #include <linux/mpls_iptunnel.h>
 #include <linux/ncsi.h>
 #include <linux/net_namespace.h>
@@ -125,23 +149,32 @@ struct termios2 {
 #include <linux/netfilter.h>
 #include <linux/netfilter_ipv4.h>
 #include <linux/netlink.h>
+#include <linux/net_tstamp.h>
 #include <linux/nexthop.h>
 #include <linux/nfc.h>
 #include <linux/nl80211.h>
 #include <linux/openat2.h>
 #include <linux/perf_event.h>
 #include <linux/pps.h>
+#include <linux/ptp_clock.h>
 #include <linux/random.h>
 #include <linux/rtc.h>
 #include <linux/rtnetlink.h>
+// This is to avoid a conflict of struct sched_param being defined by
+// both the kernel and the glibc (sched.h) headers.
+#define sched_param kernel_sched_param
+#include <linux/sched/types.h>
+#undef kernel_sched_param
 #include <linux/shm.h>
+#include <linux/sock_diag.h>
 #include <linux/socket.h>
 #include <linux/stat.h>
 #include <linux/taskstats.h>
 #include <linux/tipc.h>
+#include <linux/virtio_net.h>
+#include <linux/vm_sockets.h>
 #include <linux/watchdog.h>
 #include <linux/wireguard.h>
-#include <linux/vm_sockets.h>
 
 #include <mtd/mtd-user.h>
 
@@ -156,7 +189,7 @@ struct termios2 {
 //	  struct (like st_atim) for consistency with the glibc fields.
 //	* The padding fields get different names to not break compatibility.
 //	* st_blocks is signed, again for compatibility.
-struct stat {
+typedef struct {
 	unsigned int		st_dev;
 	unsigned int		st_pad1[3]; // Reserved for st_dev expansion
 
@@ -183,37 +216,9 @@ struct stat {
 	unsigned int		st_pad4;
 
 	long			st_blocks;
-};
-
-// These are needed because we do not include fcntl.h or sys/types.h
-#include <linux/fcntl.h>
-#include <linux/fadvise.h>
-
+} my_stat;
 #else
-
-// Use the stat defined by glibc
-#include <fcntl.h>
-#include <sys/types.h>
-
-#endif
-
-// These are defined in linux/fcntl.h, but including it globally causes
-// conflicts with fcntl.h
-#ifndef AT_STATX_SYNC_TYPE
-# define AT_STATX_SYNC_TYPE	0x6000	// Type of synchronisation required from statx()
-#endif
-#ifndef AT_STATX_SYNC_AS_STAT
-# define AT_STATX_SYNC_AS_STAT	0x0000	// - Do whatever stat() does
-#endif
-#ifndef AT_STATX_FORCE_SYNC
-# define AT_STATX_FORCE_SYNC	0x2000	// - Force the attributes to be sync'd with the server
-#endif
-#ifndef AT_STATX_DONT_SYNC
-# define AT_STATX_DONT_SYNC	0x4000	// - Don't sync attributes with the server
-#endif
-
-#ifndef AT_EACCESS
-# define AT_EACCESS		0x200	// Test access permitted for effective IDs, not real IDs.
+typedef struct stat my_stat;
 #endif
 
 #ifdef TCSETS2
@@ -449,6 +454,92 @@ struct my_can_bittiming_const {
 	__u32 brp_max;
 	__u32 brp_inc;
 };
+
+#if defined(__riscv)
+#include <asm/hwprobe.h>
+#else
+
+// copied from /usr/include/asm/hwprobe.h
+// values are not used but they need to be defined.
+
+#define RISCV_HWPROBE_KEY_MVENDORID	0
+#define RISCV_HWPROBE_KEY_MARCHID	1
+#define RISCV_HWPROBE_KEY_MIMPID	2
+#define RISCV_HWPROBE_KEY_BASE_BEHAVIOR	3
+#define		RISCV_HWPROBE_BASE_BEHAVIOR_IMA	(1 << 0)
+#define RISCV_HWPROBE_KEY_IMA_EXT_0	4
+#define		RISCV_HWPROBE_IMA_FD		(1 << 0)
+#define		RISCV_HWPROBE_IMA_C		(1 << 1)
+#define		RISCV_HWPROBE_IMA_V		(1 << 2)
+#define		RISCV_HWPROBE_EXT_ZBA		(1 << 3)
+#define		RISCV_HWPROBE_EXT_ZBB		(1 << 4)
+#define		RISCV_HWPROBE_EXT_ZBS		(1 << 5)
+#define		RISCV_HWPROBE_EXT_ZICBOZ	(1 << 6)
+#define		RISCV_HWPROBE_EXT_ZBC		(1 << 7)
+#define		RISCV_HWPROBE_EXT_ZBKB		(1 << 8)
+#define		RISCV_HWPROBE_EXT_ZBKC		(1 << 9)
+#define		RISCV_HWPROBE_EXT_ZBKX		(1 << 10)
+#define		RISCV_HWPROBE_EXT_ZKND		(1 << 11)
+#define		RISCV_HWPROBE_EXT_ZKNE		(1 << 12)
+#define		RISCV_HWPROBE_EXT_ZKNH		(1 << 13)
+#define		RISCV_HWPROBE_EXT_ZKSED		(1 << 14)
+#define		RISCV_HWPROBE_EXT_ZKSH		(1 << 15)
+#define		RISCV_HWPROBE_EXT_ZKT		(1 << 16)
+#define		RISCV_HWPROBE_EXT_ZVBB		(1 << 17)
+#define		RISCV_HWPROBE_EXT_ZVBC		(1 << 18)
+#define		RISCV_HWPROBE_EXT_ZVKB		(1 << 19)
+#define		RISCV_HWPROBE_EXT_ZVKG		(1 << 20)
+#define		RISCV_HWPROBE_EXT_ZVKNED	(1 << 21)
+#define		RISCV_HWPROBE_EXT_ZVKNHA	(1 << 22)
+#define		RISCV_HWPROBE_EXT_ZVKNHB	(1 << 23)
+#define		RISCV_HWPROBE_EXT_ZVKSED	(1 << 24)
+#define		RISCV_HWPROBE_EXT_ZVKSH		(1 << 25)
+#define		RISCV_HWPROBE_EXT_ZVKT		(1 << 26)
+#define		RISCV_HWPROBE_EXT_ZFH		(1 << 27)
+#define		RISCV_HWPROBE_EXT_ZFHMIN	(1 << 28)
+#define		RISCV_HWPROBE_EXT_ZIHINTNTL	(1 << 29)
+#define		RISCV_HWPROBE_EXT_ZVFH		(1 << 30)
+#define		RISCV_HWPROBE_EXT_ZVFHMIN	(1ULL << 31)
+#define		RISCV_HWPROBE_EXT_ZFA		(1ULL << 32)
+#define		RISCV_HWPROBE_EXT_ZTSO		(1ULL << 33)
+#define		RISCV_HWPROBE_EXT_ZACAS		(1ULL << 34)
+#define		RISCV_HWPROBE_EXT_ZICOND	(1ULL << 35)
+#define		RISCV_HWPROBE_EXT_ZIHINTPAUSE	(1ULL << 36)
+#define RISCV_HWPROBE_KEY_CPUPERF_0	5
+#define		RISCV_HWPROBE_MISALIGNED_UNKNOWN	(0 << 0)
+#define		RISCV_HWPROBE_MISALIGNED_EMULATED	(1 << 0)
+#define		RISCV_HWPROBE_MISALIGNED_SLOW		(2 << 0)
+#define		RISCV_HWPROBE_MISALIGNED_FAST		(3 << 0)
+#define		RISCV_HWPROBE_MISALIGNED_UNSUPPORTED	(4 << 0)
+#define		RISCV_HWPROBE_MISALIGNED_MASK		(7 << 0)
+#define RISCV_HWPROBE_KEY_ZICBOZ_BLOCK_SIZE	6
+#define RISCV_HWPROBE_WHICH_CPUS	(1 << 0)
+
+struct riscv_hwprobe {};
+#endif
+
+// copied from /usr/include/uapi/linux/mman.h
+struct cachestat_range {
+	__u64 off;
+	__u64 len;
+};
+
+struct cachestat {
+	__u64 nr_cache;
+	__u64 nr_dirty;
+	__u64 nr_writeback;
+	__u64 nr_evicted;
+	__u64 nr_recently_evicted;
+};
+
+// the one defined in linux/ptp_clock.h has unions
+struct my_ptp_perout_request {
+	struct ptp_clock_time startOrPhase;	// start or phase
+	struct ptp_clock_time period;
+	unsigned int index;
+	unsigned int flags;
+	struct ptp_clock_time on;
+};
 */
 import "C"
 
@@ -476,6 +567,8 @@ type (
 
 type Timespec C.struct_timespec
 
+type KernelTimespec C.struct___kernel_timespec
+
 type Timeval C.struct_timeval
 
 type Timex C.struct_timex
@@ -483,6 +576,41 @@ type Timex C.struct_timex
 type ItimerSpec C.struct_itimerspec
 
 type Itimerval C.struct_itimerval
+
+const (
+	ADJ_OFFSET            = C.ADJ_OFFSET
+	ADJ_FREQUENCY         = C.ADJ_FREQUENCY
+	ADJ_MAXERROR          = C.ADJ_MAXERROR
+	ADJ_ESTERROR          = C.ADJ_ESTERROR
+	ADJ_STATUS            = C.ADJ_STATUS
+	ADJ_TIMECONST         = C.ADJ_TIMECONST
+	ADJ_TAI               = C.ADJ_TAI
+	ADJ_SETOFFSET         = C.ADJ_SETOFFSET
+	ADJ_MICRO             = C.ADJ_MICRO
+	ADJ_NANO              = C.ADJ_NANO
+	ADJ_TICK              = C.ADJ_TICK
+	ADJ_OFFSET_SINGLESHOT = C.ADJ_OFFSET_SINGLESHOT
+	ADJ_OFFSET_SS_READ    = C.ADJ_OFFSET_SS_READ
+)
+
+const (
+	STA_PLL       = C.STA_PLL
+	STA_PPSFREQ   = C.STA_PPSFREQ
+	STA_PPSTIME   = C.STA_PPSTIME
+	STA_FLL       = C.STA_FLL
+	STA_INS       = C.STA_INS
+	STA_DEL       = C.STA_DEL
+	STA_UNSYNC    = C.STA_UNSYNC
+	STA_FREQHOLD  = C.STA_FREQHOLD
+	STA_PPSSIGNAL = C.STA_PPSSIGNAL
+	STA_PPSJITTER = C.STA_PPSJITTER
+	STA_PPSWANDER = C.STA_PPSWANDER
+	STA_PPSERROR  = C.STA_PPSERROR
+	STA_CLOCKERR  = C.STA_CLOCKERR
+	STA_NANO      = C.STA_NANO
+	STA_MODE      = C.STA_MODE
+	STA_CLK       = C.STA_CLK
+)
 
 const (
 	TIME_OK    = C.TIME_OK
@@ -510,7 +638,7 @@ type _Gid_t C.gid_t
 
 // Files
 
-type Stat_t C.struct_stat
+type Stat_t C.my_stat
 
 type StatxTimestamp C.struct_statx_timestamp
 
@@ -663,6 +791,12 @@ type Ucred C.struct_ucred
 
 type TCPInfo C.struct_tcp_info
 
+type TCPVegasInfo C.struct_tcpvegas_info
+
+type TCPDCTCPInfo C.struct_tcp_dctcp_info
+
+type TCPBBRInfo C.struct_tcp_bbr_info
+
 type CanFilter C.struct_can_filter
 
 type ifreq C.struct_ifreq
@@ -704,6 +838,7 @@ const (
 	SizeofICMPv6Filter      = C.sizeof_struct_icmp6_filter
 	SizeofUcred             = C.sizeof_struct_ucred
 	SizeofTCPInfo           = C.sizeof_struct_tcp_info
+	SizeofTCPCCInfo         = C.sizeof_union_tcp_cc_info
 	SizeofCanFilter         = C.sizeof_struct_can_filter
 	SizeofTCPRepairOpt      = C.sizeof_struct_tcp_repair_opt
 )
@@ -711,107 +846,115 @@ const (
 // Netlink routing and interface messages
 
 const (
-	NDA_UNSPEC         = C.NDA_UNSPEC
-	NDA_DST            = C.NDA_DST
-	NDA_LLADDR         = C.NDA_LLADDR
-	NDA_CACHEINFO      = C.NDA_CACHEINFO
-	NDA_PROBES         = C.NDA_PROBES
-	NDA_VLAN           = C.NDA_VLAN
-	NDA_PORT           = C.NDA_PORT
-	NDA_VNI            = C.NDA_VNI
-	NDA_IFINDEX        = C.NDA_IFINDEX
-	NDA_MASTER         = C.NDA_MASTER
-	NDA_LINK_NETNSID   = C.NDA_LINK_NETNSID
-	NDA_SRC_VNI        = C.NDA_SRC_VNI
-	NTF_USE            = C.NTF_USE
-	NTF_SELF           = C.NTF_SELF
-	NTF_MASTER         = C.NTF_MASTER
-	NTF_PROXY          = C.NTF_PROXY
-	NTF_EXT_LEARNED    = C.NTF_EXT_LEARNED
-	NTF_OFFLOADED      = C.NTF_OFFLOADED
-	NTF_ROUTER         = C.NTF_ROUTER
-	NUD_INCOMPLETE     = C.NUD_INCOMPLETE
-	NUD_REACHABLE      = C.NUD_REACHABLE
-	NUD_STALE          = C.NUD_STALE
-	NUD_DELAY          = C.NUD_DELAY
-	NUD_PROBE          = C.NUD_PROBE
-	NUD_FAILED         = C.NUD_FAILED
-	NUD_NOARP          = C.NUD_NOARP
-	NUD_PERMANENT      = C.NUD_PERMANENT
-	NUD_NONE           = C.NUD_NONE
-	IFA_UNSPEC         = C.IFA_UNSPEC
-	IFA_ADDRESS        = C.IFA_ADDRESS
-	IFA_LOCAL          = C.IFA_LOCAL
-	IFA_LABEL          = C.IFA_LABEL
-	IFA_BROADCAST      = C.IFA_BROADCAST
-	IFA_ANYCAST        = C.IFA_ANYCAST
-	IFA_CACHEINFO      = C.IFA_CACHEINFO
-	IFA_MULTICAST      = C.IFA_MULTICAST
-	IFA_FLAGS          = C.IFA_FLAGS
-	IFA_RT_PRIORITY    = C.IFA_RT_PRIORITY
-	IFA_TARGET_NETNSID = C.IFA_TARGET_NETNSID
-	RT_SCOPE_UNIVERSE  = C.RT_SCOPE_UNIVERSE
-	RT_SCOPE_SITE      = C.RT_SCOPE_SITE
-	RT_SCOPE_LINK      = C.RT_SCOPE_LINK
-	RT_SCOPE_HOST      = C.RT_SCOPE_HOST
-	RT_SCOPE_NOWHERE   = C.RT_SCOPE_NOWHERE
-	RT_TABLE_UNSPEC    = C.RT_TABLE_UNSPEC
-	RT_TABLE_COMPAT    = C.RT_TABLE_COMPAT
-	RT_TABLE_DEFAULT   = C.RT_TABLE_DEFAULT
-	RT_TABLE_MAIN      = C.RT_TABLE_MAIN
-	RT_TABLE_LOCAL     = C.RT_TABLE_LOCAL
-	RT_TABLE_MAX       = C.RT_TABLE_MAX
-	RTA_UNSPEC         = C.RTA_UNSPEC
-	RTA_DST            = C.RTA_DST
-	RTA_SRC            = C.RTA_SRC
-	RTA_IIF            = C.RTA_IIF
-	RTA_OIF            = C.RTA_OIF
-	RTA_GATEWAY        = C.RTA_GATEWAY
-	RTA_PRIORITY       = C.RTA_PRIORITY
-	RTA_PREFSRC        = C.RTA_PREFSRC
-	RTA_METRICS        = C.RTA_METRICS
-	RTA_MULTIPATH      = C.RTA_MULTIPATH
-	RTA_FLOW           = C.RTA_FLOW
-	RTA_CACHEINFO      = C.RTA_CACHEINFO
-	RTA_TABLE          = C.RTA_TABLE
-	RTA_MARK           = C.RTA_MARK
-	RTA_MFC_STATS      = C.RTA_MFC_STATS
-	RTA_VIA            = C.RTA_VIA
-	RTA_NEWDST         = C.RTA_NEWDST
-	RTA_PREF           = C.RTA_PREF
-	RTA_ENCAP_TYPE     = C.RTA_ENCAP_TYPE
-	RTA_ENCAP          = C.RTA_ENCAP
-	RTA_EXPIRES        = C.RTA_EXPIRES
-	RTA_PAD            = C.RTA_PAD
-	RTA_UID            = C.RTA_UID
-	RTA_TTL_PROPAGATE  = C.RTA_TTL_PROPAGATE
-	RTA_IP_PROTO       = C.RTA_IP_PROTO
-	RTA_SPORT          = C.RTA_SPORT
-	RTA_DPORT          = C.RTA_DPORT
-	RTN_UNSPEC         = C.RTN_UNSPEC
-	RTN_UNICAST        = C.RTN_UNICAST
-	RTN_LOCAL          = C.RTN_LOCAL
-	RTN_BROADCAST      = C.RTN_BROADCAST
-	RTN_ANYCAST        = C.RTN_ANYCAST
-	RTN_MULTICAST      = C.RTN_MULTICAST
-	RTN_BLACKHOLE      = C.RTN_BLACKHOLE
-	RTN_UNREACHABLE    = C.RTN_UNREACHABLE
-	RTN_PROHIBIT       = C.RTN_PROHIBIT
-	RTN_THROW          = C.RTN_THROW
-	RTN_NAT            = C.RTN_NAT
-	RTN_XRESOLVE       = C.RTN_XRESOLVE
-	SizeofNlMsghdr     = C.sizeof_struct_nlmsghdr
-	SizeofNlMsgerr     = C.sizeof_struct_nlmsgerr
-	SizeofRtGenmsg     = C.sizeof_struct_rtgenmsg
-	SizeofNlAttr       = C.sizeof_struct_nlattr
-	SizeofRtAttr       = C.sizeof_struct_rtattr
-	SizeofIfInfomsg    = C.sizeof_struct_ifinfomsg
-	SizeofIfAddrmsg    = C.sizeof_struct_ifaddrmsg
-	SizeofIfaCacheinfo = C.sizeof_struct_ifa_cacheinfo
-	SizeofRtMsg        = C.sizeof_struct_rtmsg
-	SizeofRtNexthop    = C.sizeof_struct_rtnexthop
-	SizeofNdUseroptmsg = C.sizeof_struct_nduseroptmsg
-	SizeofNdMsg        = C.sizeof_struct_ndmsg
+	NDA_UNSPEC            = C.NDA_UNSPEC
+	NDA_DST               = C.NDA_DST
+	NDA_LLADDR            = C.NDA_LLADDR
+	NDA_CACHEINFO         = C.NDA_CACHEINFO
+	NDA_PROBES            = C.NDA_PROBES
+	NDA_VLAN              = C.NDA_VLAN
+	NDA_PORT              = C.NDA_PORT
+	NDA_VNI               = C.NDA_VNI
+	NDA_IFINDEX           = C.NDA_IFINDEX
+	NDA_MASTER            = C.NDA_MASTER
+	NDA_LINK_NETNSID      = C.NDA_LINK_NETNSID
+	NDA_SRC_VNI           = C.NDA_SRC_VNI
+	NTF_USE               = C.NTF_USE
+	NTF_SELF              = C.NTF_SELF
+	NTF_MASTER            = C.NTF_MASTER
+	NTF_PROXY             = C.NTF_PROXY
+	NTF_EXT_LEARNED       = C.NTF_EXT_LEARNED
+	NTF_OFFLOADED         = C.NTF_OFFLOADED
+	NTF_ROUTER            = C.NTF_ROUTER
+	NUD_INCOMPLETE        = C.NUD_INCOMPLETE
+	NUD_REACHABLE         = C.NUD_REACHABLE
+	NUD_STALE             = C.NUD_STALE
+	NUD_DELAY             = C.NUD_DELAY
+	NUD_PROBE             = C.NUD_PROBE
+	NUD_FAILED            = C.NUD_FAILED
+	NUD_NOARP             = C.NUD_NOARP
+	NUD_PERMANENT         = C.NUD_PERMANENT
+	NUD_NONE              = C.NUD_NONE
+	IFA_UNSPEC            = C.IFA_UNSPEC
+	IFA_ADDRESS           = C.IFA_ADDRESS
+	IFA_LOCAL             = C.IFA_LOCAL
+	IFA_LABEL             = C.IFA_LABEL
+	IFA_BROADCAST         = C.IFA_BROADCAST
+	IFA_ANYCAST           = C.IFA_ANYCAST
+	IFA_CACHEINFO         = C.IFA_CACHEINFO
+	IFA_MULTICAST         = C.IFA_MULTICAST
+	IFA_FLAGS             = C.IFA_FLAGS
+	IFA_RT_PRIORITY       = C.IFA_RT_PRIORITY
+	IFA_TARGET_NETNSID    = C.IFA_TARGET_NETNSID
+	IFAL_LABEL            = C.IFAL_LABEL
+	IFAL_ADDRESS          = C.IFAL_ADDRESS
+	RT_SCOPE_UNIVERSE     = C.RT_SCOPE_UNIVERSE
+	RT_SCOPE_SITE         = C.RT_SCOPE_SITE
+	RT_SCOPE_LINK         = C.RT_SCOPE_LINK
+	RT_SCOPE_HOST         = C.RT_SCOPE_HOST
+	RT_SCOPE_NOWHERE      = C.RT_SCOPE_NOWHERE
+	RT_TABLE_UNSPEC       = C.RT_TABLE_UNSPEC
+	RT_TABLE_COMPAT       = C.RT_TABLE_COMPAT
+	RT_TABLE_DEFAULT      = C.RT_TABLE_DEFAULT
+	RT_TABLE_MAIN         = C.RT_TABLE_MAIN
+	RT_TABLE_LOCAL        = C.RT_TABLE_LOCAL
+	RT_TABLE_MAX          = C.RT_TABLE_MAX
+	RTA_UNSPEC            = C.RTA_UNSPEC
+	RTA_DST               = C.RTA_DST
+	RTA_SRC               = C.RTA_SRC
+	RTA_IIF               = C.RTA_IIF
+	RTA_OIF               = C.RTA_OIF
+	RTA_GATEWAY           = C.RTA_GATEWAY
+	RTA_PRIORITY          = C.RTA_PRIORITY
+	RTA_PREFSRC           = C.RTA_PREFSRC
+	RTA_METRICS           = C.RTA_METRICS
+	RTA_MULTIPATH         = C.RTA_MULTIPATH
+	RTA_FLOW              = C.RTA_FLOW
+	RTA_CACHEINFO         = C.RTA_CACHEINFO
+	RTA_TABLE             = C.RTA_TABLE
+	RTA_MARK              = C.RTA_MARK
+	RTA_MFC_STATS         = C.RTA_MFC_STATS
+	RTA_VIA               = C.RTA_VIA
+	RTA_NEWDST            = C.RTA_NEWDST
+	RTA_PREF              = C.RTA_PREF
+	RTA_ENCAP_TYPE        = C.RTA_ENCAP_TYPE
+	RTA_ENCAP             = C.RTA_ENCAP
+	RTA_EXPIRES           = C.RTA_EXPIRES
+	RTA_PAD               = C.RTA_PAD
+	RTA_UID               = C.RTA_UID
+	RTA_TTL_PROPAGATE     = C.RTA_TTL_PROPAGATE
+	RTA_IP_PROTO          = C.RTA_IP_PROTO
+	RTA_SPORT             = C.RTA_SPORT
+	RTA_DPORT             = C.RTA_DPORT
+	RTN_UNSPEC            = C.RTN_UNSPEC
+	RTN_UNICAST           = C.RTN_UNICAST
+	RTN_LOCAL             = C.RTN_LOCAL
+	RTN_BROADCAST         = C.RTN_BROADCAST
+	RTN_ANYCAST           = C.RTN_ANYCAST
+	RTN_MULTICAST         = C.RTN_MULTICAST
+	RTN_BLACKHOLE         = C.RTN_BLACKHOLE
+	RTN_UNREACHABLE       = C.RTN_UNREACHABLE
+	RTN_PROHIBIT          = C.RTN_PROHIBIT
+	RTN_THROW             = C.RTN_THROW
+	RTN_NAT               = C.RTN_NAT
+	RTN_XRESOLVE          = C.RTN_XRESOLVE
+	PREFIX_UNSPEC         = C.PREFIX_UNSPEC
+	PREFIX_ADDRESS        = C.PREFIX_ADDRESS
+	PREFIX_CACHEINFO      = C.PREFIX_CACHEINFO
+	SizeofNlMsghdr        = C.sizeof_struct_nlmsghdr
+	SizeofNlMsgerr        = C.sizeof_struct_nlmsgerr
+	SizeofRtGenmsg        = C.sizeof_struct_rtgenmsg
+	SizeofNlAttr          = C.sizeof_struct_nlattr
+	SizeofRtAttr          = C.sizeof_struct_rtattr
+	SizeofIfInfomsg       = C.sizeof_struct_ifinfomsg
+	SizeofPrefixmsg       = C.sizeof_struct_prefixmsg
+	SizeofPrefixCacheinfo = C.sizeof_struct_prefix_cacheinfo
+	SizeofIfAddrmsg       = C.sizeof_struct_ifaddrmsg
+	SizeofIfAddrlblmsg    = C.sizeof_struct_ifaddrlblmsg
+	SizeofIfaCacheinfo    = C.sizeof_struct_ifa_cacheinfo
+	SizeofRtMsg           = C.sizeof_struct_rtmsg
+	SizeofRtNexthop       = C.sizeof_struct_rtnexthop
+	SizeofNdUseroptmsg    = C.sizeof_struct_nduseroptmsg
+	SizeofNdMsg           = C.sizeof_struct_ndmsg
 )
 
 type NlMsghdr C.struct_nlmsghdr
@@ -826,7 +969,13 @@ type RtAttr C.struct_rtattr
 
 type IfInfomsg C.struct_ifinfomsg
 
+type Prefixmsg C.struct_prefixmsg
+
+type PrefixCacheinfo C.struct_prefix_cacheinfo
+
 type IfAddrmsg C.struct_ifaddrmsg
+
+type IfAddrlblmsg C.struct_ifaddrlblmsg
 
 type IfaCacheinfo C.struct_ifa_cacheinfo
 
@@ -929,6 +1078,15 @@ const (
 	FSPICK_EMPTY_PATH       = C.FSPICK_EMPTY_PATH
 
 	FSMOUNT_CLOEXEC = C.FSMOUNT_CLOEXEC
+
+	FSCONFIG_SET_FLAG        = C.FSCONFIG_SET_FLAG
+	FSCONFIG_SET_STRING      = C.FSCONFIG_SET_STRING
+	FSCONFIG_SET_BINARY      = C.FSCONFIG_SET_BINARY
+	FSCONFIG_SET_PATH        = C.FSCONFIG_SET_PATH
+	FSCONFIG_SET_PATH_EMPTY  = C.FSCONFIG_SET_PATH_EMPTY
+	FSCONFIG_SET_FD          = C.FSCONFIG_SET_FD
+	FSCONFIG_CMD_CREATE      = C.FSCONFIG_CMD_CREATE
+	FSCONFIG_CMD_RECONFIGURE = C.FSCONFIG_CMD_RECONFIGURE
 )
 
 type OpenHow C.struct_open_how
@@ -956,8 +1114,18 @@ const (
 )
 
 type Sigset_t C.sigset_t
+type sigset_argpack struct {
+	ss    *Sigset_t
+	ssLen uintptr // Size (in bytes) of object pointed to by ss.
+}
 
 const _C__NSIG = C._NSIG
+
+const (
+	SIG_BLOCK   = C.SIG_BLOCK
+	SIG_UNBLOCK = C.SIG_UNBLOCK
+	SIG_SETMASK = C.SIG_SETMASK
+)
 
 type SignalfdSiginfo C.struct_signalfd_siginfo
 
@@ -1097,6 +1265,7 @@ const (
 	PerfBitCommExec                      = CBitFieldMaskBit24
 	PerfBitUseClockID                    = CBitFieldMaskBit25
 	PerfBitContextSwitch                 = CBitFieldMaskBit26
+	PerfBitWriteBackward                 = CBitFieldMaskBit27
 )
 
 // generated by:
@@ -1191,6 +1360,8 @@ const (
 	PERF_SAMPLE_BRANCH_NO_CYCLES_SHIFT    = C.PERF_SAMPLE_BRANCH_NO_CYCLES_SHIFT
 	PERF_SAMPLE_BRANCH_TYPE_SAVE_SHIFT    = C.PERF_SAMPLE_BRANCH_TYPE_SAVE_SHIFT
 	PERF_SAMPLE_BRANCH_HW_INDEX_SHIFT     = C.PERF_SAMPLE_BRANCH_HW_INDEX_SHIFT
+	PERF_SAMPLE_BRANCH_PRIV_SAVE_SHIFT    = C.PERF_SAMPLE_BRANCH_PRIV_SAVE_SHIFT
+	PERF_SAMPLE_BRANCH_COUNTERS           = C.PERF_SAMPLE_BRANCH_COUNTERS
 	PERF_SAMPLE_BRANCH_MAX_SHIFT          = C.PERF_SAMPLE_BRANCH_MAX_SHIFT
 	PERF_SAMPLE_BRANCH_USER               = C.PERF_SAMPLE_BRANCH_USER
 	PERF_SAMPLE_BRANCH_KERNEL             = C.PERF_SAMPLE_BRANCH_KERNEL
@@ -1210,6 +1381,7 @@ const (
 	PERF_SAMPLE_BRANCH_NO_CYCLES          = C.PERF_SAMPLE_BRANCH_NO_CYCLES
 	PERF_SAMPLE_BRANCH_TYPE_SAVE          = C.PERF_SAMPLE_BRANCH_TYPE_SAVE
 	PERF_SAMPLE_BRANCH_HW_INDEX           = C.PERF_SAMPLE_BRANCH_HW_INDEX
+	PERF_SAMPLE_BRANCH_PRIV_SAVE          = C.PERF_SAMPLE_BRANCH_PRIV_SAVE
 	PERF_SAMPLE_BRANCH_MAX                = C.PERF_SAMPLE_BRANCH_MAX
 	PERF_BR_UNKNOWN                       = C.PERF_BR_UNKNOWN
 	PERF_BR_COND                          = C.PERF_BR_COND
@@ -1224,6 +1396,9 @@ const (
 	PERF_BR_COND_RET                      = C.PERF_BR_COND_RET
 	PERF_BR_ERET                          = C.PERF_BR_ERET
 	PERF_BR_IRQ                           = C.PERF_BR_IRQ
+	PERF_BR_SERROR                        = C.PERF_BR_SERROR
+	PERF_BR_NO_TX                         = C.PERF_BR_NO_TX
+	PERF_BR_EXTEND_ABI                    = C.PERF_BR_EXTEND_ABI
 	PERF_BR_MAX                           = C.PERF_BR_MAX
 	PERF_SAMPLE_REGS_ABI_NONE             = C.PERF_SAMPLE_REGS_ABI_NONE
 	PERF_SAMPLE_REGS_ABI_32               = C.PERF_SAMPLE_REGS_ABI_32
@@ -1243,6 +1418,7 @@ const (
 	PERF_FORMAT_TOTAL_TIME_RUNNING        = C.PERF_FORMAT_TOTAL_TIME_RUNNING
 	PERF_FORMAT_ID                        = C.PERF_FORMAT_ID
 	PERF_FORMAT_GROUP                     = C.PERF_FORMAT_GROUP
+	PERF_FORMAT_LOST                      = C.PERF_FORMAT_LOST
 	PERF_FORMAT_MAX                       = C.PERF_FORMAT_MAX
 	PERF_IOC_FLAG_GROUP                   = C.PERF_IOC_FLAG_GROUP
 	PERF_RECORD_MMAP                      = C.PERF_RECORD_MMAP
@@ -1492,6 +1668,11 @@ const (
 	IFLA_GRO_MAX_SIZE                          = C.IFLA_GRO_MAX_SIZE
 	IFLA_TSO_MAX_SIZE                          = C.IFLA_TSO_MAX_SIZE
 	IFLA_TSO_MAX_SEGS                          = C.IFLA_TSO_MAX_SEGS
+	IFLA_ALLMULTI                              = C.IFLA_ALLMULTI
+	IFLA_DEVLINK_PORT                          = C.IFLA_DEVLINK_PORT
+	IFLA_GSO_IPV4_MAX_SIZE                     = C.IFLA_GSO_IPV4_MAX_SIZE
+	IFLA_GRO_IPV4_MAX_SIZE                     = C.IFLA_GRO_IPV4_MAX_SIZE
+	IFLA_DPLL_PIN                              = C.IFLA_DPLL_PIN
 	IFLA_PROTO_DOWN_REASON_UNSPEC              = C.IFLA_PROTO_DOWN_REASON_UNSPEC
 	IFLA_PROTO_DOWN_REASON_MASK                = C.IFLA_PROTO_DOWN_REASON_MASK
 	IFLA_PROTO_DOWN_REASON_VALUE               = C.IFLA_PROTO_DOWN_REASON_VALUE
@@ -1507,6 +1688,7 @@ const (
 	IFLA_INET6_ICMP6STATS                      = C.IFLA_INET6_ICMP6STATS
 	IFLA_INET6_TOKEN                           = C.IFLA_INET6_TOKEN
 	IFLA_INET6_ADDR_GEN_MODE                   = C.IFLA_INET6_ADDR_GEN_MODE
+	IFLA_INET6_RA_MTU                          = C.IFLA_INET6_RA_MTU
 	IFLA_BR_UNSPEC                             = C.IFLA_BR_UNSPEC
 	IFLA_BR_FORWARD_DELAY                      = C.IFLA_BR_FORWARD_DELAY
 	IFLA_BR_HELLO_TIME                         = C.IFLA_BR_HELLO_TIME
@@ -1554,6 +1736,9 @@ const (
 	IFLA_BR_MCAST_MLD_VERSION                  = C.IFLA_BR_MCAST_MLD_VERSION
 	IFLA_BR_VLAN_STATS_PER_PORT                = C.IFLA_BR_VLAN_STATS_PER_PORT
 	IFLA_BR_MULTI_BOOLOPT                      = C.IFLA_BR_MULTI_BOOLOPT
+	IFLA_BR_MCAST_QUERIER_STATE                = C.IFLA_BR_MCAST_QUERIER_STATE
+	IFLA_BR_FDB_N_LEARNED                      = C.IFLA_BR_FDB_N_LEARNED
+	IFLA_BR_FDB_MAX_LEARNED                    = C.IFLA_BR_FDB_MAX_LEARNED
 	IFLA_BRPORT_UNSPEC                         = C.IFLA_BRPORT_UNSPEC
 	IFLA_BRPORT_STATE                          = C.IFLA_BRPORT_STATE
 	IFLA_BRPORT_PRIORITY                       = C.IFLA_BRPORT_PRIORITY
@@ -1591,6 +1776,14 @@ const (
 	IFLA_BRPORT_BACKUP_PORT                    = C.IFLA_BRPORT_BACKUP_PORT
 	IFLA_BRPORT_MRP_RING_OPEN                  = C.IFLA_BRPORT_MRP_RING_OPEN
 	IFLA_BRPORT_MRP_IN_OPEN                    = C.IFLA_BRPORT_MRP_IN_OPEN
+	IFLA_BRPORT_MCAST_EHT_HOSTS_LIMIT          = C.IFLA_BRPORT_MCAST_EHT_HOSTS_LIMIT
+	IFLA_BRPORT_MCAST_EHT_HOSTS_CNT            = C.IFLA_BRPORT_MCAST_EHT_HOSTS_CNT
+	IFLA_BRPORT_LOCKED                         = C.IFLA_BRPORT_LOCKED
+	IFLA_BRPORT_MAB                            = C.IFLA_BRPORT_MAB
+	IFLA_BRPORT_MCAST_N_GROUPS                 = C.IFLA_BRPORT_MCAST_N_GROUPS
+	IFLA_BRPORT_MCAST_MAX_GROUPS               = C.IFLA_BRPORT_MCAST_MAX_GROUPS
+	IFLA_BRPORT_NEIGH_VLAN_SUPPRESS            = C.IFLA_BRPORT_NEIGH_VLAN_SUPPRESS
+	IFLA_BRPORT_BACKUP_NHID                    = C.IFLA_BRPORT_BACKUP_NHID
 	IFLA_INFO_UNSPEC                           = C.IFLA_INFO_UNSPEC
 	IFLA_INFO_KIND                             = C.IFLA_INFO_KIND
 	IFLA_INFO_DATA                             = C.IFLA_INFO_DATA
@@ -1612,6 +1805,9 @@ const (
 	IFLA_MACVLAN_MACADDR                       = C.IFLA_MACVLAN_MACADDR
 	IFLA_MACVLAN_MACADDR_DATA                  = C.IFLA_MACVLAN_MACADDR_DATA
 	IFLA_MACVLAN_MACADDR_COUNT                 = C.IFLA_MACVLAN_MACADDR_COUNT
+	IFLA_MACVLAN_BC_QUEUE_LEN                  = C.IFLA_MACVLAN_BC_QUEUE_LEN
+	IFLA_MACVLAN_BC_QUEUE_LEN_USED             = C.IFLA_MACVLAN_BC_QUEUE_LEN_USED
+	IFLA_MACVLAN_BC_CUTOFF                     = C.IFLA_MACVLAN_BC_CUTOFF
 	IFLA_VRF_UNSPEC                            = C.IFLA_VRF_UNSPEC
 	IFLA_VRF_TABLE                             = C.IFLA_VRF_TABLE
 	IFLA_VRF_PORT_UNSPEC                       = C.IFLA_VRF_PORT_UNSPEC
@@ -1635,9 +1831,16 @@ const (
 	IFLA_XFRM_UNSPEC                           = C.IFLA_XFRM_UNSPEC
 	IFLA_XFRM_LINK                             = C.IFLA_XFRM_LINK
 	IFLA_XFRM_IF_ID                            = C.IFLA_XFRM_IF_ID
+	IFLA_XFRM_COLLECT_METADATA                 = C.IFLA_XFRM_COLLECT_METADATA
 	IFLA_IPVLAN_UNSPEC                         = C.IFLA_IPVLAN_UNSPEC
 	IFLA_IPVLAN_MODE                           = C.IFLA_IPVLAN_MODE
 	IFLA_IPVLAN_FLAGS                          = C.IFLA_IPVLAN_FLAGS
+	IFLA_NETKIT_UNSPEC                         = C.IFLA_NETKIT_UNSPEC
+	IFLA_NETKIT_PEER_INFO                      = C.IFLA_NETKIT_PEER_INFO
+	IFLA_NETKIT_PRIMARY                        = C.IFLA_NETKIT_PRIMARY
+	IFLA_NETKIT_POLICY                         = C.IFLA_NETKIT_POLICY
+	IFLA_NETKIT_PEER_POLICY                    = C.IFLA_NETKIT_PEER_POLICY
+	IFLA_NETKIT_MODE                           = C.IFLA_NETKIT_MODE
 	IFLA_VXLAN_UNSPEC                          = C.IFLA_VXLAN_UNSPEC
 	IFLA_VXLAN_ID                              = C.IFLA_VXLAN_ID
 	IFLA_VXLAN_GROUP                           = C.IFLA_VXLAN_GROUP
@@ -1668,6 +1871,9 @@ const (
 	IFLA_VXLAN_GPE                             = C.IFLA_VXLAN_GPE
 	IFLA_VXLAN_TTL_INHERIT                     = C.IFLA_VXLAN_TTL_INHERIT
 	IFLA_VXLAN_DF                              = C.IFLA_VXLAN_DF
+	IFLA_VXLAN_VNIFILTER                       = C.IFLA_VXLAN_VNIFILTER
+	IFLA_VXLAN_LOCALBYPASS                     = C.IFLA_VXLAN_LOCALBYPASS
+	IFLA_VXLAN_LABEL_POLICY                    = C.IFLA_VXLAN_LABEL_POLICY
 	IFLA_GENEVE_UNSPEC                         = C.IFLA_GENEVE_UNSPEC
 	IFLA_GENEVE_ID                             = C.IFLA_GENEVE_ID
 	IFLA_GENEVE_REMOTE                         = C.IFLA_GENEVE_REMOTE
@@ -1682,6 +1888,7 @@ const (
 	IFLA_GENEVE_LABEL                          = C.IFLA_GENEVE_LABEL
 	IFLA_GENEVE_TTL_INHERIT                    = C.IFLA_GENEVE_TTL_INHERIT
 	IFLA_GENEVE_DF                             = C.IFLA_GENEVE_DF
+	IFLA_GENEVE_INNER_PROTO_INHERIT            = C.IFLA_GENEVE_INNER_PROTO_INHERIT
 	IFLA_BAREUDP_UNSPEC                        = C.IFLA_BAREUDP_UNSPEC
 	IFLA_BAREUDP_PORT                          = C.IFLA_BAREUDP_PORT
 	IFLA_BAREUDP_ETHERTYPE                     = C.IFLA_BAREUDP_ETHERTYPE
@@ -1694,6 +1901,10 @@ const (
 	IFLA_GTP_FD1                               = C.IFLA_GTP_FD1
 	IFLA_GTP_PDP_HASHSIZE                      = C.IFLA_GTP_PDP_HASHSIZE
 	IFLA_GTP_ROLE                              = C.IFLA_GTP_ROLE
+	IFLA_GTP_CREATE_SOCKETS                    = C.IFLA_GTP_CREATE_SOCKETS
+	IFLA_GTP_RESTART_COUNT                     = C.IFLA_GTP_RESTART_COUNT
+	IFLA_GTP_LOCAL                             = C.IFLA_GTP_LOCAL
+	IFLA_GTP_LOCAL6                            = C.IFLA_GTP_LOCAL6
 	IFLA_BOND_UNSPEC                           = C.IFLA_BOND_UNSPEC
 	IFLA_BOND_MODE                             = C.IFLA_BOND_MODE
 	IFLA_BOND_ACTIVE_SLAVE                     = C.IFLA_BOND_ACTIVE_SLAVE
@@ -1723,6 +1934,10 @@ const (
 	IFLA_BOND_AD_ACTOR_SYSTEM                  = C.IFLA_BOND_AD_ACTOR_SYSTEM
 	IFLA_BOND_TLB_DYNAMIC_LB                   = C.IFLA_BOND_TLB_DYNAMIC_LB
 	IFLA_BOND_PEER_NOTIF_DELAY                 = C.IFLA_BOND_PEER_NOTIF_DELAY
+	IFLA_BOND_AD_LACP_ACTIVE                   = C.IFLA_BOND_AD_LACP_ACTIVE
+	IFLA_BOND_MISSED_MAX                       = C.IFLA_BOND_MISSED_MAX
+	IFLA_BOND_NS_IP6_TARGET                    = C.IFLA_BOND_NS_IP6_TARGET
+	IFLA_BOND_COUPLED_CONTROL                  = C.IFLA_BOND_COUPLED_CONTROL
 	IFLA_BOND_AD_INFO_UNSPEC                   = C.IFLA_BOND_AD_INFO_UNSPEC
 	IFLA_BOND_AD_INFO_AGGREGATOR               = C.IFLA_BOND_AD_INFO_AGGREGATOR
 	IFLA_BOND_AD_INFO_NUM_PORTS                = C.IFLA_BOND_AD_INFO_NUM_PORTS
@@ -1738,6 +1953,7 @@ const (
 	IFLA_BOND_SLAVE_AD_AGGREGATOR_ID           = C.IFLA_BOND_SLAVE_AD_AGGREGATOR_ID
 	IFLA_BOND_SLAVE_AD_ACTOR_OPER_PORT_STATE   = C.IFLA_BOND_SLAVE_AD_ACTOR_OPER_PORT_STATE
 	IFLA_BOND_SLAVE_AD_PARTNER_OPER_PORT_STATE = C.IFLA_BOND_SLAVE_AD_PARTNER_OPER_PORT_STATE
+	IFLA_BOND_SLAVE_PRIO                       = C.IFLA_BOND_SLAVE_PRIO
 	IFLA_VF_INFO_UNSPEC                        = C.IFLA_VF_INFO_UNSPEC
 	IFLA_VF_INFO                               = C.IFLA_VF_INFO
 	IFLA_VF_UNSPEC                             = C.IFLA_VF_UNSPEC
@@ -1790,14 +2006,23 @@ const (
 	IFLA_HSR_SEQ_NR                            = C.IFLA_HSR_SEQ_NR
 	IFLA_HSR_VERSION                           = C.IFLA_HSR_VERSION
 	IFLA_HSR_PROTOCOL                          = C.IFLA_HSR_PROTOCOL
+	IFLA_HSR_INTERLINK                         = C.IFLA_HSR_INTERLINK
 	IFLA_STATS_UNSPEC                          = C.IFLA_STATS_UNSPEC
 	IFLA_STATS_LINK_64                         = C.IFLA_STATS_LINK_64
 	IFLA_STATS_LINK_XSTATS                     = C.IFLA_STATS_LINK_XSTATS
 	IFLA_STATS_LINK_XSTATS_SLAVE               = C.IFLA_STATS_LINK_XSTATS_SLAVE
 	IFLA_STATS_LINK_OFFLOAD_XSTATS             = C.IFLA_STATS_LINK_OFFLOAD_XSTATS
 	IFLA_STATS_AF_SPEC                         = C.IFLA_STATS_AF_SPEC
+	IFLA_STATS_GETSET_UNSPEC                   = C.IFLA_STATS_GETSET_UNSPEC
+	IFLA_STATS_GET_FILTERS                     = C.IFLA_STATS_GET_FILTERS
+	IFLA_STATS_SET_OFFLOAD_XSTATS_L3_STATS     = C.IFLA_STATS_SET_OFFLOAD_XSTATS_L3_STATS
 	IFLA_OFFLOAD_XSTATS_UNSPEC                 = C.IFLA_OFFLOAD_XSTATS_UNSPEC
 	IFLA_OFFLOAD_XSTATS_CPU_HIT                = C.IFLA_OFFLOAD_XSTATS_CPU_HIT
+	IFLA_OFFLOAD_XSTATS_HW_S_INFO              = C.IFLA_OFFLOAD_XSTATS_HW_S_INFO
+	IFLA_OFFLOAD_XSTATS_L3_STATS               = C.IFLA_OFFLOAD_XSTATS_L3_STATS
+	IFLA_OFFLOAD_XSTATS_HW_S_INFO_UNSPEC       = C.IFLA_OFFLOAD_XSTATS_HW_S_INFO_UNSPEC
+	IFLA_OFFLOAD_XSTATS_HW_S_INFO_REQUEST      = C.IFLA_OFFLOAD_XSTATS_HW_S_INFO_REQUEST
+	IFLA_OFFLOAD_XSTATS_HW_S_INFO_USED         = C.IFLA_OFFLOAD_XSTATS_HW_S_INFO_USED
 	IFLA_XDP_UNSPEC                            = C.IFLA_XDP_UNSPEC
 	IFLA_XDP_FD                                = C.IFLA_XDP_FD
 	IFLA_XDP_ATTACHED                          = C.IFLA_XDP_ATTACHED
@@ -1827,6 +2052,22 @@ const (
 	IFLA_RMNET_UNSPEC                          = C.IFLA_RMNET_UNSPEC
 	IFLA_RMNET_MUX_ID                          = C.IFLA_RMNET_MUX_ID
 	IFLA_RMNET_FLAGS                           = C.IFLA_RMNET_FLAGS
+	IFLA_MCTP_UNSPEC                           = C.IFLA_MCTP_UNSPEC
+	IFLA_MCTP_NET                              = C.IFLA_MCTP_NET
+	IFLA_DSA_UNSPEC                            = C.IFLA_DSA_UNSPEC
+	IFLA_DSA_CONDUIT                           = C.IFLA_DSA_CONDUIT
+	IFLA_DSA_MASTER                            = C.IFLA_DSA_MASTER
+)
+
+// netkit
+// perl -nlE '/^\s*(NETKIT\w+)/ && say "$1 = C.$1"' /usr/include/linux/if_link.h
+const (
+	NETKIT_NEXT     = C.NETKIT_NEXT
+	NETKIT_PASS     = C.NETKIT_PASS
+	NETKIT_DROP     = C.NETKIT_DROP
+	NETKIT_REDIRECT = C.NETKIT_REDIRECT
+	NETKIT_L2       = C.NETKIT_L2
+	NETKIT_L3       = C.NETKIT_L3
 )
 
 // netfilter
@@ -1921,6 +2162,10 @@ const (
 	NFT_MSG_GETOBJ                    = C.NFT_MSG_GETOBJ
 	NFT_MSG_DELOBJ                    = C.NFT_MSG_DELOBJ
 	NFT_MSG_GETOBJ_RESET              = C.NFT_MSG_GETOBJ_RESET
+	NFT_MSG_NEWFLOWTABLE              = C.NFT_MSG_NEWFLOWTABLE
+	NFT_MSG_GETFLOWTABLE              = C.NFT_MSG_GETFLOWTABLE
+	NFT_MSG_DELFLOWTABLE              = C.NFT_MSG_DELFLOWTABLE
+	NFT_MSG_GETRULE_RESET             = C.NFT_MSG_GETRULE_RESET
 	NFT_MSG_MAX                       = C.NFT_MSG_MAX
 	NFTA_LIST_UNSPEC                  = C.NFTA_LIST_UNSPEC
 	NFTA_LIST_ELEM                    = C.NFTA_LIST_ELEM
@@ -2069,8 +2314,11 @@ const (
 	NFT_PAYLOAD_LL_HEADER             = C.NFT_PAYLOAD_LL_HEADER
 	NFT_PAYLOAD_NETWORK_HEADER        = C.NFT_PAYLOAD_NETWORK_HEADER
 	NFT_PAYLOAD_TRANSPORT_HEADER      = C.NFT_PAYLOAD_TRANSPORT_HEADER
+	NFT_PAYLOAD_INNER_HEADER          = C.NFT_PAYLOAD_INNER_HEADER
+	NFT_PAYLOAD_TUN_HEADER            = C.NFT_PAYLOAD_TUN_HEADER
 	NFT_PAYLOAD_CSUM_NONE             = C.NFT_PAYLOAD_CSUM_NONE
 	NFT_PAYLOAD_CSUM_INET             = C.NFT_PAYLOAD_CSUM_INET
+	NFT_PAYLOAD_CSUM_SCTP             = C.NFT_PAYLOAD_CSUM_SCTP
 	NFT_PAYLOAD_L4CSUM_PSEUDOHDR      = C.NFT_PAYLOAD_L4CSUM_PSEUDOHDR
 	NFTA_PAYLOAD_UNSPEC               = C.NFTA_PAYLOAD_UNSPEC
 	NFTA_PAYLOAD_DREG                 = C.NFTA_PAYLOAD_DREG
@@ -2157,6 +2405,11 @@ const (
 	NFT_CT_AVGPKT                     = C.NFT_CT_AVGPKT
 	NFT_CT_ZONE                       = C.NFT_CT_ZONE
 	NFT_CT_EVENTMASK                  = C.NFT_CT_EVENTMASK
+	NFT_CT_SRC_IP                     = C.NFT_CT_SRC_IP
+	NFT_CT_DST_IP                     = C.NFT_CT_DST_IP
+	NFT_CT_SRC_IP6                    = C.NFT_CT_SRC_IP6
+	NFT_CT_DST_IP6                    = C.NFT_CT_DST_IP6
+	NFT_CT_ID                         = C.NFT_CT_ID
 	NFTA_CT_UNSPEC                    = C.NFTA_CT_UNSPEC
 	NFTA_CT_DREG                      = C.NFTA_CT_DREG
 	NFTA_CT_KEY                       = C.NFTA_CT_KEY
@@ -2404,6 +2657,8 @@ const (
 	SOF_TIMESTAMPING_OPT_STATS    = C.SOF_TIMESTAMPING_OPT_STATS
 	SOF_TIMESTAMPING_OPT_PKTINFO  = C.SOF_TIMESTAMPING_OPT_PKTINFO
 	SOF_TIMESTAMPING_OPT_TX_SWHW  = C.SOF_TIMESTAMPING_OPT_TX_SWHW
+	SOF_TIMESTAMPING_BIND_PHC     = C.SOF_TIMESTAMPING_BIND_PHC
+	SOF_TIMESTAMPING_OPT_ID_TCP   = C.SOF_TIMESTAMPING_OPT_ID_TCP
 
 	SOF_TIMESTAMPING_LAST = C.SOF_TIMESTAMPING_LAST
 	SOF_TIMESTAMPING_MASK = C.SOF_TIMESTAMPING_MASK
@@ -2512,6 +2767,11 @@ const (
 	BPF_REG_8                                  = C.BPF_REG_8
 	BPF_REG_9                                  = C.BPF_REG_9
 	BPF_REG_10                                 = C.BPF_REG_10
+	BPF_CGROUP_ITER_ORDER_UNSPEC               = C.BPF_CGROUP_ITER_ORDER_UNSPEC
+	BPF_CGROUP_ITER_SELF_ONLY                  = C.BPF_CGROUP_ITER_SELF_ONLY
+	BPF_CGROUP_ITER_DESCENDANTS_PRE            = C.BPF_CGROUP_ITER_DESCENDANTS_PRE
+	BPF_CGROUP_ITER_DESCENDANTS_POST           = C.BPF_CGROUP_ITER_DESCENDANTS_POST
+	BPF_CGROUP_ITER_ANCESTORS_UP               = C.BPF_CGROUP_ITER_ANCESTORS_UP
 	BPF_MAP_CREATE                             = C.BPF_MAP_CREATE
 	BPF_MAP_LOOKUP_ELEM                        = C.BPF_MAP_LOOKUP_ELEM
 	BPF_MAP_UPDATE_ELEM                        = C.BPF_MAP_UPDATE_ELEM
@@ -2523,6 +2783,7 @@ const (
 	BPF_PROG_ATTACH                            = C.BPF_PROG_ATTACH
 	BPF_PROG_DETACH                            = C.BPF_PROG_DETACH
 	BPF_PROG_TEST_RUN                          = C.BPF_PROG_TEST_RUN
+	BPF_PROG_RUN                               = C.BPF_PROG_RUN
 	BPF_PROG_GET_NEXT_ID                       = C.BPF_PROG_GET_NEXT_ID
 	BPF_MAP_GET_NEXT_ID                        = C.BPF_MAP_GET_NEXT_ID
 	BPF_PROG_GET_FD_BY_ID                      = C.BPF_PROG_GET_FD_BY_ID
@@ -2567,6 +2828,7 @@ const (
 	BPF_MAP_TYPE_CPUMAP                        = C.BPF_MAP_TYPE_CPUMAP
 	BPF_MAP_TYPE_XSKMAP                        = C.BPF_MAP_TYPE_XSKMAP
 	BPF_MAP_TYPE_SOCKHASH                      = C.BPF_MAP_TYPE_SOCKHASH
+	BPF_MAP_TYPE_CGROUP_STORAGE_DEPRECATED     = C.BPF_MAP_TYPE_CGROUP_STORAGE_DEPRECATED
 	BPF_MAP_TYPE_CGROUP_STORAGE                = C.BPF_MAP_TYPE_CGROUP_STORAGE
 	BPF_MAP_TYPE_REUSEPORT_SOCKARRAY           = C.BPF_MAP_TYPE_REUSEPORT_SOCKARRAY
 	BPF_MAP_TYPE_PERCPU_CGROUP_STORAGE         = C.BPF_MAP_TYPE_PERCPU_CGROUP_STORAGE
@@ -2577,6 +2839,10 @@ const (
 	BPF_MAP_TYPE_STRUCT_OPS                    = C.BPF_MAP_TYPE_STRUCT_OPS
 	BPF_MAP_TYPE_RINGBUF                       = C.BPF_MAP_TYPE_RINGBUF
 	BPF_MAP_TYPE_INODE_STORAGE                 = C.BPF_MAP_TYPE_INODE_STORAGE
+	BPF_MAP_TYPE_TASK_STORAGE                  = C.BPF_MAP_TYPE_TASK_STORAGE
+	BPF_MAP_TYPE_BLOOM_FILTER                  = C.BPF_MAP_TYPE_BLOOM_FILTER
+	BPF_MAP_TYPE_USER_RINGBUF                  = C.BPF_MAP_TYPE_USER_RINGBUF
+	BPF_MAP_TYPE_CGRP_STORAGE                  = C.BPF_MAP_TYPE_CGRP_STORAGE
 	BPF_PROG_TYPE_UNSPEC                       = C.BPF_PROG_TYPE_UNSPEC
 	BPF_PROG_TYPE_SOCKET_FILTER                = C.BPF_PROG_TYPE_SOCKET_FILTER
 	BPF_PROG_TYPE_KPROBE                       = C.BPF_PROG_TYPE_KPROBE
@@ -2608,6 +2874,8 @@ const (
 	BPF_PROG_TYPE_EXT                          = C.BPF_PROG_TYPE_EXT
 	BPF_PROG_TYPE_LSM                          = C.BPF_PROG_TYPE_LSM
 	BPF_PROG_TYPE_SK_LOOKUP                    = C.BPF_PROG_TYPE_SK_LOOKUP
+	BPF_PROG_TYPE_SYSCALL                      = C.BPF_PROG_TYPE_SYSCALL
+	BPF_PROG_TYPE_NETFILTER                    = C.BPF_PROG_TYPE_NETFILTER
 	BPF_CGROUP_INET_INGRESS                    = C.BPF_CGROUP_INET_INGRESS
 	BPF_CGROUP_INET_EGRESS                     = C.BPF_CGROUP_INET_EGRESS
 	BPF_CGROUP_INET_SOCK_CREATE                = C.BPF_CGROUP_INET_SOCK_CREATE
@@ -2646,6 +2914,17 @@ const (
 	BPF_XDP_CPUMAP                             = C.BPF_XDP_CPUMAP
 	BPF_SK_LOOKUP                              = C.BPF_SK_LOOKUP
 	BPF_XDP                                    = C.BPF_XDP
+	BPF_SK_SKB_VERDICT                         = C.BPF_SK_SKB_VERDICT
+	BPF_SK_REUSEPORT_SELECT                    = C.BPF_SK_REUSEPORT_SELECT
+	BPF_SK_REUSEPORT_SELECT_OR_MIGRATE         = C.BPF_SK_REUSEPORT_SELECT_OR_MIGRATE
+	BPF_PERF_EVENT                             = C.BPF_PERF_EVENT
+	BPF_TRACE_KPROBE_MULTI                     = C.BPF_TRACE_KPROBE_MULTI
+	BPF_LSM_CGROUP                             = C.BPF_LSM_CGROUP
+	BPF_STRUCT_OPS                             = C.BPF_STRUCT_OPS
+	BPF_NETFILTER                              = C.BPF_NETFILTER
+	BPF_TCX_INGRESS                            = C.BPF_TCX_INGRESS
+	BPF_TCX_EGRESS                             = C.BPF_TCX_EGRESS
+	BPF_TRACE_UPROBE_MULTI                     = C.BPF_TRACE_UPROBE_MULTI
 	BPF_LINK_TYPE_UNSPEC                       = C.BPF_LINK_TYPE_UNSPEC
 	BPF_LINK_TYPE_RAW_TRACEPOINT               = C.BPF_LINK_TYPE_RAW_TRACEPOINT
 	BPF_LINK_TYPE_TRACING                      = C.BPF_LINK_TYPE_TRACING
@@ -2653,6 +2932,21 @@ const (
 	BPF_LINK_TYPE_ITER                         = C.BPF_LINK_TYPE_ITER
 	BPF_LINK_TYPE_NETNS                        = C.BPF_LINK_TYPE_NETNS
 	BPF_LINK_TYPE_XDP                          = C.BPF_LINK_TYPE_XDP
+	BPF_LINK_TYPE_PERF_EVENT                   = C.BPF_LINK_TYPE_PERF_EVENT
+	BPF_LINK_TYPE_KPROBE_MULTI                 = C.BPF_LINK_TYPE_KPROBE_MULTI
+	BPF_LINK_TYPE_STRUCT_OPS                   = C.BPF_LINK_TYPE_STRUCT_OPS
+	BPF_LINK_TYPE_NETFILTER                    = C.BPF_LINK_TYPE_NETFILTER
+	BPF_LINK_TYPE_TCX                          = C.BPF_LINK_TYPE_TCX
+	BPF_LINK_TYPE_UPROBE_MULTI                 = C.BPF_LINK_TYPE_UPROBE_MULTI
+	BPF_PERF_EVENT_UNSPEC                      = C.BPF_PERF_EVENT_UNSPEC
+	BPF_PERF_EVENT_UPROBE                      = C.BPF_PERF_EVENT_UPROBE
+	BPF_PERF_EVENT_URETPROBE                   = C.BPF_PERF_EVENT_URETPROBE
+	BPF_PERF_EVENT_KPROBE                      = C.BPF_PERF_EVENT_KPROBE
+	BPF_PERF_EVENT_KRETPROBE                   = C.BPF_PERF_EVENT_KRETPROBE
+	BPF_PERF_EVENT_TRACEPOINT                  = C.BPF_PERF_EVENT_TRACEPOINT
+	BPF_PERF_EVENT_EVENT                       = C.BPF_PERF_EVENT_EVENT
+	BPF_F_KPROBE_MULTI_RETURN                  = C.BPF_F_KPROBE_MULTI_RETURN
+	BPF_F_UPROBE_MULTI_RETURN                  = C.BPF_F_UPROBE_MULTI_RETURN
 	BPF_ANY                                    = C.BPF_ANY
 	BPF_NOEXIST                                = C.BPF_NOEXIST
 	BPF_EXIST                                  = C.BPF_EXIST
@@ -2670,6 +2964,8 @@ const (
 	BPF_F_MMAPABLE                             = C.BPF_F_MMAPABLE
 	BPF_F_PRESERVE_ELEMS                       = C.BPF_F_PRESERVE_ELEMS
 	BPF_F_INNER_MAP                            = C.BPF_F_INNER_MAP
+	BPF_F_LINK                                 = C.BPF_F_LINK
+	BPF_F_PATH_FD                              = C.BPF_F_PATH_FD
 	BPF_STATS_RUN_TIME                         = C.BPF_STATS_RUN_TIME
 	BPF_STACK_BUILD_ID_EMPTY                   = C.BPF_STACK_BUILD_ID_EMPTY
 	BPF_STACK_BUILD_ID_VALID                   = C.BPF_STACK_BUILD_ID_VALID
@@ -2690,6 +2986,8 @@ const (
 	BPF_F_ZERO_CSUM_TX                         = C.BPF_F_ZERO_CSUM_TX
 	BPF_F_DONT_FRAGMENT                        = C.BPF_F_DONT_FRAGMENT
 	BPF_F_SEQ_NUMBER                           = C.BPF_F_SEQ_NUMBER
+	BPF_F_NO_TUNNEL_KEY                        = C.BPF_F_NO_TUNNEL_KEY
+	BPF_F_TUNINFO_FLAGS                        = C.BPF_F_TUNINFO_FLAGS
 	BPF_F_INDEX_MASK                           = C.BPF_F_INDEX_MASK
 	BPF_F_CURRENT_CPU                          = C.BPF_F_CURRENT_CPU
 	BPF_F_CTXLEN_MASK                          = C.BPF_F_CTXLEN_MASK
@@ -2704,6 +3002,9 @@ const (
 	BPF_F_ADJ_ROOM_ENCAP_L4_GRE                = C.BPF_F_ADJ_ROOM_ENCAP_L4_GRE
 	BPF_F_ADJ_ROOM_ENCAP_L4_UDP                = C.BPF_F_ADJ_ROOM_ENCAP_L4_UDP
 	BPF_F_ADJ_ROOM_NO_CSUM_RESET               = C.BPF_F_ADJ_ROOM_NO_CSUM_RESET
+	BPF_F_ADJ_ROOM_ENCAP_L2_ETH                = C.BPF_F_ADJ_ROOM_ENCAP_L2_ETH
+	BPF_F_ADJ_ROOM_DECAP_L3_IPV4               = C.BPF_F_ADJ_ROOM_DECAP_L3_IPV4
+	BPF_F_ADJ_ROOM_DECAP_L3_IPV6               = C.BPF_F_ADJ_ROOM_DECAP_L3_IPV6
 	BPF_ADJ_ROOM_ENCAP_L2_MASK                 = C.BPF_ADJ_ROOM_ENCAP_L2_MASK
 	BPF_ADJ_ROOM_ENCAP_L2_SHIFT                = C.BPF_ADJ_ROOM_ENCAP_L2_SHIFT
 	BPF_F_SYSCTL_BASE_NAME                     = C.BPF_F_SYSCTL_BASE_NAME
@@ -2728,10 +3029,16 @@ const (
 	BPF_LWT_ENCAP_SEG6                         = C.BPF_LWT_ENCAP_SEG6
 	BPF_LWT_ENCAP_SEG6_INLINE                  = C.BPF_LWT_ENCAP_SEG6_INLINE
 	BPF_LWT_ENCAP_IP                           = C.BPF_LWT_ENCAP_IP
+	BPF_F_BPRM_SECUREEXEC                      = C.BPF_F_BPRM_SECUREEXEC
+	BPF_F_BROADCAST                            = C.BPF_F_BROADCAST
+	BPF_F_EXCLUDE_INGRESS                      = C.BPF_F_EXCLUDE_INGRESS
+	BPF_SKB_TSTAMP_UNSPEC                      = C.BPF_SKB_TSTAMP_UNSPEC
+	BPF_SKB_TSTAMP_DELIVERY_MONO               = C.BPF_SKB_TSTAMP_DELIVERY_MONO
 	BPF_OK                                     = C.BPF_OK
 	BPF_DROP                                   = C.BPF_DROP
 	BPF_REDIRECT                               = C.BPF_REDIRECT
 	BPF_LWT_REROUTE                            = C.BPF_LWT_REROUTE
+	BPF_FLOW_DISSECTOR_CONTINUE                = C.BPF_FLOW_DISSECTOR_CONTINUE
 	BPF_SOCK_OPS_RTO_CB_FLAG                   = C.BPF_SOCK_OPS_RTO_CB_FLAG
 	BPF_SOCK_OPS_RETRANS_CB_FLAG               = C.BPF_SOCK_OPS_RETRANS_CB_FLAG
 	BPF_SOCK_OPS_STATE_CB_FLAG                 = C.BPF_SOCK_OPS_STATE_CB_FLAG
@@ -2786,6 +3093,8 @@ const (
 	BPF_DEVCG_DEV_CHAR                         = C.BPF_DEVCG_DEV_CHAR
 	BPF_FIB_LOOKUP_DIRECT                      = C.BPF_FIB_LOOKUP_DIRECT
 	BPF_FIB_LOOKUP_OUTPUT                      = C.BPF_FIB_LOOKUP_OUTPUT
+	BPF_FIB_LOOKUP_SKIP_NEIGH                  = C.BPF_FIB_LOOKUP_SKIP_NEIGH
+	BPF_FIB_LOOKUP_TBID                        = C.BPF_FIB_LOOKUP_TBID
 	BPF_FIB_LKUP_RET_SUCCESS                   = C.BPF_FIB_LKUP_RET_SUCCESS
 	BPF_FIB_LKUP_RET_BLACKHOLE                 = C.BPF_FIB_LKUP_RET_BLACKHOLE
 	BPF_FIB_LKUP_RET_UNREACHABLE               = C.BPF_FIB_LKUP_RET_UNREACHABLE
@@ -2795,6 +3104,10 @@ const (
 	BPF_FIB_LKUP_RET_UNSUPP_LWT                = C.BPF_FIB_LKUP_RET_UNSUPP_LWT
 	BPF_FIB_LKUP_RET_NO_NEIGH                  = C.BPF_FIB_LKUP_RET_NO_NEIGH
 	BPF_FIB_LKUP_RET_FRAG_NEEDED               = C.BPF_FIB_LKUP_RET_FRAG_NEEDED
+	BPF_MTU_CHK_SEGS                           = C.BPF_MTU_CHK_SEGS
+	BPF_MTU_CHK_RET_SUCCESS                    = C.BPF_MTU_CHK_RET_SUCCESS
+	BPF_MTU_CHK_RET_FRAG_NEEDED                = C.BPF_MTU_CHK_RET_FRAG_NEEDED
+	BPF_MTU_CHK_RET_SEGS_TOOBIG                = C.BPF_MTU_CHK_RET_SEGS_TOOBIG
 	BPF_FD_TYPE_RAW_TRACEPOINT                 = C.BPF_FD_TYPE_RAW_TRACEPOINT
 	BPF_FD_TYPE_TRACEPOINT                     = C.BPF_FD_TYPE_TRACEPOINT
 	BPF_FD_TYPE_KPROBE                         = C.BPF_FD_TYPE_KPROBE
@@ -2804,11 +3117,42 @@ const (
 	BPF_FLOW_DISSECTOR_F_PARSE_1ST_FRAG        = C.BPF_FLOW_DISSECTOR_F_PARSE_1ST_FRAG
 	BPF_FLOW_DISSECTOR_F_STOP_AT_FLOW_LABEL    = C.BPF_FLOW_DISSECTOR_F_STOP_AT_FLOW_LABEL
 	BPF_FLOW_DISSECTOR_F_STOP_AT_ENCAP         = C.BPF_FLOW_DISSECTOR_F_STOP_AT_ENCAP
+	BPF_CORE_FIELD_BYTE_OFFSET                 = C.BPF_CORE_FIELD_BYTE_OFFSET
+	BPF_CORE_FIELD_BYTE_SIZE                   = C.BPF_CORE_FIELD_BYTE_SIZE
+	BPF_CORE_FIELD_EXISTS                      = C.BPF_CORE_FIELD_EXISTS
+	BPF_CORE_FIELD_SIGNED                      = C.BPF_CORE_FIELD_SIGNED
+	BPF_CORE_FIELD_LSHIFT_U64                  = C.BPF_CORE_FIELD_LSHIFT_U64
+	BPF_CORE_FIELD_RSHIFT_U64                  = C.BPF_CORE_FIELD_RSHIFT_U64
+	BPF_CORE_TYPE_ID_LOCAL                     = C.BPF_CORE_TYPE_ID_LOCAL
+	BPF_CORE_TYPE_ID_TARGET                    = C.BPF_CORE_TYPE_ID_TARGET
+	BPF_CORE_TYPE_EXISTS                       = C.BPF_CORE_TYPE_EXISTS
+	BPF_CORE_TYPE_SIZE                         = C.BPF_CORE_TYPE_SIZE
+	BPF_CORE_ENUMVAL_EXISTS                    = C.BPF_CORE_ENUMVAL_EXISTS
+	BPF_CORE_ENUMVAL_VALUE                     = C.BPF_CORE_ENUMVAL_VALUE
+	BPF_CORE_TYPE_MATCHES                      = C.BPF_CORE_TYPE_MATCHES
+	BPF_F_TIMER_ABS                            = C.BPF_F_TIMER_ABS
 )
 
 // generated by:
-// perl -nlE '/^\s*(RTNLGRP_\w+)/ && say "$1 = C.$1"' include/uapi/linux/rtnetlink.h
+// perl -nlE '/^\s*((RTNLGRP_|TCA_)\w+)/ && say "$1 = C.$1"' include/uapi/linux/rtnetlink.h
 const (
+	TCA_UNSPEC            = C.TCA_UNSPEC
+	TCA_KIND              = C.TCA_KIND
+	TCA_OPTIONS           = C.TCA_OPTIONS
+	TCA_STATS             = C.TCA_STATS
+	TCA_XSTATS            = C.TCA_XSTATS
+	TCA_RATE              = C.TCA_RATE
+	TCA_FCNT              = C.TCA_FCNT
+	TCA_STATS2            = C.TCA_STATS2
+	TCA_STAB              = C.TCA_STAB
+	TCA_PAD               = C.TCA_PAD
+	TCA_DUMP_INVISIBLE    = C.TCA_DUMP_INVISIBLE
+	TCA_CHAIN             = C.TCA_CHAIN
+	TCA_HW_OFFLOAD        = C.TCA_HW_OFFLOAD
+	TCA_INGRESS_BLOCK     = C.TCA_INGRESS_BLOCK
+	TCA_EGRESS_BLOCK      = C.TCA_EGRESS_BLOCK
+	TCA_DUMP_FLAGS        = C.TCA_DUMP_FLAGS
+	TCA_EXT_WARN_MSG      = C.TCA_EXT_WARN_MSG
 	RTNLGRP_NONE          = C.RTNLGRP_NONE
 	RTNLGRP_LINK          = C.RTNLGRP_LINK
 	RTNLGRP_NOTIFY        = C.RTNLGRP_NOTIFY
@@ -2843,6 +3187,18 @@ const (
 	RTNLGRP_IPV6_MROUTE_R = C.RTNLGRP_IPV6_MROUTE_R
 	RTNLGRP_NEXTHOP       = C.RTNLGRP_NEXTHOP
 	RTNLGRP_BRVLAN        = C.RTNLGRP_BRVLAN
+	RTNLGRP_MCTP_IFADDR   = C.RTNLGRP_MCTP_IFADDR
+	RTNLGRP_TUNNEL        = C.RTNLGRP_TUNNEL
+	RTNLGRP_STATS         = C.RTNLGRP_STATS
+	RTNLGRP_IPV4_MCADDR   = C.RTNLGRP_IPV4_MCADDR
+	RTNLGRP_IPV6_MCADDR   = C.RTNLGRP_IPV6_MCADDR
+	RTNLGRP_IPV6_ACADDR   = C.RTNLGRP_IPV6_ACADDR
+	TCA_ROOT_UNSPEC       = C.TCA_ROOT_UNSPEC
+	TCA_ROOT_TAB          = C.TCA_ROOT_TAB
+	TCA_ROOT_FLAGS        = C.TCA_ROOT_FLAGS
+	TCA_ROOT_COUNT        = C.TCA_ROOT_COUNT
+	TCA_ROOT_TIME_DELTA   = C.TCA_ROOT_TIME_DELTA
+	TCA_ROOT_EXT_WARN_MSG = C.TCA_ROOT_EXT_WARN_MSG
 )
 
 // Capabilities
@@ -2868,6 +3224,7 @@ const (
 
 type LoopInfo C.struct_loop_info
 type LoopInfo64 C.struct_loop_info64
+type LoopConfig C.struct_loop_config
 
 // AF_TIPC
 
@@ -2983,6 +3340,15 @@ const (
 	DEVLINK_CMD_TRAP_POLICER_NEW                       = C.DEVLINK_CMD_TRAP_POLICER_NEW
 	DEVLINK_CMD_TRAP_POLICER_DEL                       = C.DEVLINK_CMD_TRAP_POLICER_DEL
 	DEVLINK_CMD_HEALTH_REPORTER_TEST                   = C.DEVLINK_CMD_HEALTH_REPORTER_TEST
+	DEVLINK_CMD_RATE_GET                               = C.DEVLINK_CMD_RATE_GET
+	DEVLINK_CMD_RATE_SET                               = C.DEVLINK_CMD_RATE_SET
+	DEVLINK_CMD_RATE_NEW                               = C.DEVLINK_CMD_RATE_NEW
+	DEVLINK_CMD_RATE_DEL                               = C.DEVLINK_CMD_RATE_DEL
+	DEVLINK_CMD_LINECARD_GET                           = C.DEVLINK_CMD_LINECARD_GET
+	DEVLINK_CMD_LINECARD_SET                           = C.DEVLINK_CMD_LINECARD_SET
+	DEVLINK_CMD_LINECARD_NEW                           = C.DEVLINK_CMD_LINECARD_NEW
+	DEVLINK_CMD_LINECARD_DEL                           = C.DEVLINK_CMD_LINECARD_DEL
+	DEVLINK_CMD_SELFTESTS_GET                          = C.DEVLINK_CMD_SELFTESTS_GET
 	DEVLINK_CMD_MAX                                    = C.DEVLINK_CMD_MAX
 	DEVLINK_PORT_TYPE_NOTSET                           = C.DEVLINK_PORT_TYPE_NOTSET
 	DEVLINK_PORT_TYPE_AUTO                             = C.DEVLINK_PORT_TYPE_AUTO
@@ -3212,6 +3578,12 @@ const (
 	DEVLINK_ATTR_RATE_NODE_NAME                        = C.DEVLINK_ATTR_RATE_NODE_NAME
 	DEVLINK_ATTR_RATE_PARENT_NODE_NAME                 = C.DEVLINK_ATTR_RATE_PARENT_NODE_NAME
 	DEVLINK_ATTR_REGION_MAX_SNAPSHOTS                  = C.DEVLINK_ATTR_REGION_MAX_SNAPSHOTS
+	DEVLINK_ATTR_LINECARD_INDEX                        = C.DEVLINK_ATTR_LINECARD_INDEX
+	DEVLINK_ATTR_LINECARD_STATE                        = C.DEVLINK_ATTR_LINECARD_STATE
+	DEVLINK_ATTR_LINECARD_TYPE                         = C.DEVLINK_ATTR_LINECARD_TYPE
+	DEVLINK_ATTR_LINECARD_SUPPORTED_TYPES              = C.DEVLINK_ATTR_LINECARD_SUPPORTED_TYPES
+	DEVLINK_ATTR_NESTED_DEVLINK                        = C.DEVLINK_ATTR_NESTED_DEVLINK
+	DEVLINK_ATTR_SELFTESTS                             = C.DEVLINK_ATTR_SELFTESTS
 	DEVLINK_ATTR_MAX                                   = C.DEVLINK_ATTR_MAX
 	DEVLINK_DPIPE_FIELD_MAPPING_TYPE_NONE              = C.DEVLINK_DPIPE_FIELD_MAPPING_TYPE_NONE
 	DEVLINK_DPIPE_FIELD_MAPPING_TYPE_IFINDEX           = C.DEVLINK_DPIPE_FIELD_MAPPING_TYPE_IFINDEX
@@ -3228,6 +3600,7 @@ const (
 	DEVLINK_PORT_FUNCTION_ATTR_HW_ADDR                 = C.DEVLINK_PORT_FUNCTION_ATTR_HW_ADDR
 	DEVLINK_PORT_FN_ATTR_STATE                         = C.DEVLINK_PORT_FN_ATTR_STATE
 	DEVLINK_PORT_FN_ATTR_OPSTATE                       = C.DEVLINK_PORT_FN_ATTR_OPSTATE
+	DEVLINK_PORT_FN_ATTR_CAPS                          = C.DEVLINK_PORT_FN_ATTR_CAPS
 	DEVLINK_PORT_FUNCTION_ATTR_MAX                     = C.DEVLINK_PORT_FUNCTION_ATTR_MAX
 )
 
@@ -3241,7 +3614,11 @@ type FsverityEnableArg C.struct_fsverity_enable_arg
 
 type Nhmsg C.struct_nhmsg
 
+const SizeofNhmsg = C.sizeof_struct_nhmsg
+
 type NexthopGrp C.struct_nexthop_grp
+
+const SizeofNexthopGrp = C.sizeof_struct_nexthop_grp
 
 const (
 	NHA_UNSPEC     = C.NHA_UNSPEC
@@ -3302,6 +3679,7 @@ const (
 	LWTUNNEL_ENCAP_SEG6_LOCAL = C.LWTUNNEL_ENCAP_SEG6_LOCAL
 	LWTUNNEL_ENCAP_RPL        = C.LWTUNNEL_ENCAP_RPL
 	LWTUNNEL_ENCAP_IOAM6      = C.LWTUNNEL_ENCAP_IOAM6
+	LWTUNNEL_ENCAP_XFRM       = C.LWTUNNEL_ENCAP_XFRM
 	LWTUNNEL_ENCAP_MAX        = C.LWTUNNEL_ENCAP_MAX
 
 	MPLS_IPTUNNEL_UNSPEC = C.MPLS_IPTUNNEL_UNSPEC
@@ -3312,8 +3690,8 @@ const (
 
 // ethtool and its netlink interface, generated using:
 //
-// perl -nlE '/^\s*(ETHTOOL_\w+)/ && say "$1 = C.$1"' ethtool.h
-// perl -nlE '/^\s*(ETHTOOL_\w+)/ && say "$1 = C.$1"' ethtool_netlink.h
+// perl -nlE '/^\s*(ETHTOOL_\w+)/ && say "$1 = C.$1"' /usr/include/linux/ethtool.h
+// perl -nlE '/^\s*(ETHTOOL_\w+)/ && say "$1 = C.$1"' /usr/include/linux/ethtool_netlink.h
 //
 // Note that a couple of constants produced by this command will be duplicated
 // by mkerrors.sh, so some manual pruning was necessary.
@@ -3504,6 +3882,18 @@ const (
 	ETHTOOL_MSG_PHC_VCLOCKS_GET               = C.ETHTOOL_MSG_PHC_VCLOCKS_GET
 	ETHTOOL_MSG_MODULE_GET                    = C.ETHTOOL_MSG_MODULE_GET
 	ETHTOOL_MSG_MODULE_SET                    = C.ETHTOOL_MSG_MODULE_SET
+	ETHTOOL_MSG_PSE_GET                       = C.ETHTOOL_MSG_PSE_GET
+	ETHTOOL_MSG_PSE_SET                       = C.ETHTOOL_MSG_PSE_SET
+	ETHTOOL_MSG_RSS_GET                       = C.ETHTOOL_MSG_RSS_GET
+	ETHTOOL_MSG_PLCA_GET_CFG                  = C.ETHTOOL_MSG_PLCA_GET_CFG
+	ETHTOOL_MSG_PLCA_SET_CFG                  = C.ETHTOOL_MSG_PLCA_SET_CFG
+	ETHTOOL_MSG_PLCA_GET_STATUS               = C.ETHTOOL_MSG_PLCA_GET_STATUS
+	ETHTOOL_MSG_MM_GET                        = C.ETHTOOL_MSG_MM_GET
+	ETHTOOL_MSG_MM_SET                        = C.ETHTOOL_MSG_MM_SET
+	ETHTOOL_MSG_MODULE_FW_FLASH_ACT           = C.ETHTOOL_MSG_MODULE_FW_FLASH_ACT
+	ETHTOOL_MSG_PHY_GET                       = C.ETHTOOL_MSG_PHY_GET
+	ETHTOOL_MSG_TSCONFIG_GET                  = C.ETHTOOL_MSG_TSCONFIG_GET
+	ETHTOOL_MSG_TSCONFIG_SET                  = C.ETHTOOL_MSG_TSCONFIG_SET
 	ETHTOOL_MSG_USER_MAX                      = C.ETHTOOL_MSG_USER_MAX
 	ETHTOOL_MSG_KERNEL_NONE                   = C.ETHTOOL_MSG_KERNEL_NONE
 	ETHTOOL_MSG_STRSET_GET_REPLY              = C.ETHTOOL_MSG_STRSET_GET_REPLY
@@ -3542,7 +3932,22 @@ const (
 	ETHTOOL_MSG_PHC_VCLOCKS_GET_REPLY         = C.ETHTOOL_MSG_PHC_VCLOCKS_GET_REPLY
 	ETHTOOL_MSG_MODULE_GET_REPLY              = C.ETHTOOL_MSG_MODULE_GET_REPLY
 	ETHTOOL_MSG_MODULE_NTF                    = C.ETHTOOL_MSG_MODULE_NTF
+	ETHTOOL_MSG_PSE_GET_REPLY                 = C.ETHTOOL_MSG_PSE_GET_REPLY
+	ETHTOOL_MSG_RSS_GET_REPLY                 = C.ETHTOOL_MSG_RSS_GET_REPLY
+	ETHTOOL_MSG_PLCA_GET_CFG_REPLY            = C.ETHTOOL_MSG_PLCA_GET_CFG_REPLY
+	ETHTOOL_MSG_PLCA_GET_STATUS_REPLY         = C.ETHTOOL_MSG_PLCA_GET_STATUS_REPLY
+	ETHTOOL_MSG_PLCA_NTF                      = C.ETHTOOL_MSG_PLCA_NTF
+	ETHTOOL_MSG_MM_GET_REPLY                  = C.ETHTOOL_MSG_MM_GET_REPLY
+	ETHTOOL_MSG_MM_NTF                        = C.ETHTOOL_MSG_MM_NTF
+	ETHTOOL_MSG_MODULE_FW_FLASH_NTF           = C.ETHTOOL_MSG_MODULE_FW_FLASH_NTF
+	ETHTOOL_MSG_PHY_GET_REPLY                 = C.ETHTOOL_MSG_PHY_GET_REPLY
+	ETHTOOL_MSG_PHY_NTF                       = C.ETHTOOL_MSG_PHY_NTF
+	ETHTOOL_MSG_TSCONFIG_GET_REPLY            = C.ETHTOOL_MSG_TSCONFIG_GET_REPLY
+	ETHTOOL_MSG_TSCONFIG_SET_REPLY            = C.ETHTOOL_MSG_TSCONFIG_SET_REPLY
 	ETHTOOL_MSG_KERNEL_MAX                    = C.ETHTOOL_MSG_KERNEL_MAX
+	ETHTOOL_FLAG_COMPACT_BITSETS              = C.ETHTOOL_FLAG_COMPACT_BITSETS
+	ETHTOOL_FLAG_OMIT_REPLY                   = C.ETHTOOL_FLAG_OMIT_REPLY
+	ETHTOOL_FLAG_STATS                        = C.ETHTOOL_FLAG_STATS
 	ETHTOOL_A_HEADER_UNSPEC                   = C.ETHTOOL_A_HEADER_UNSPEC
 	ETHTOOL_A_HEADER_DEV_INDEX                = C.ETHTOOL_A_HEADER_DEV_INDEX
 	ETHTOOL_A_HEADER_DEV_NAME                 = C.ETHTOOL_A_HEADER_DEV_NAME
@@ -3601,6 +4006,7 @@ const (
 	ETHTOOL_A_LINKMODES_MASTER_SLAVE_CFG      = C.ETHTOOL_A_LINKMODES_MASTER_SLAVE_CFG
 	ETHTOOL_A_LINKMODES_MASTER_SLAVE_STATE    = C.ETHTOOL_A_LINKMODES_MASTER_SLAVE_STATE
 	ETHTOOL_A_LINKMODES_LANES                 = C.ETHTOOL_A_LINKMODES_LANES
+	ETHTOOL_A_LINKMODES_RATE_MATCHING         = C.ETHTOOL_A_LINKMODES_RATE_MATCHING
 	ETHTOOL_A_LINKMODES_MAX                   = C.ETHTOOL_A_LINKMODES_MAX
 	ETHTOOL_A_LINKSTATE_UNSPEC                = C.ETHTOOL_A_LINKSTATE_UNSPEC
 	ETHTOOL_A_LINKSTATE_HEADER                = C.ETHTOOL_A_LINKSTATE_HEADER
@@ -3609,6 +4015,7 @@ const (
 	ETHTOOL_A_LINKSTATE_SQI_MAX               = C.ETHTOOL_A_LINKSTATE_SQI_MAX
 	ETHTOOL_A_LINKSTATE_EXT_STATE             = C.ETHTOOL_A_LINKSTATE_EXT_STATE
 	ETHTOOL_A_LINKSTATE_EXT_SUBSTATE          = C.ETHTOOL_A_LINKSTATE_EXT_SUBSTATE
+	ETHTOOL_A_LINKSTATE_EXT_DOWN_CNT          = C.ETHTOOL_A_LINKSTATE_EXT_DOWN_CNT
 	ETHTOOL_A_LINKSTATE_MAX                   = C.ETHTOOL_A_LINKSTATE_MAX
 	ETHTOOL_A_DEBUG_UNSPEC                    = C.ETHTOOL_A_DEBUG_UNSPEC
 	ETHTOOL_A_DEBUG_HEADER                    = C.ETHTOOL_A_DEBUG_HEADER
@@ -3644,6 +4051,11 @@ const (
 	ETHTOOL_A_RINGS_TCP_DATA_SPLIT            = C.ETHTOOL_A_RINGS_TCP_DATA_SPLIT
 	ETHTOOL_A_RINGS_CQE_SIZE                  = C.ETHTOOL_A_RINGS_CQE_SIZE
 	ETHTOOL_A_RINGS_TX_PUSH                   = C.ETHTOOL_A_RINGS_TX_PUSH
+	ETHTOOL_A_RINGS_RX_PUSH                   = C.ETHTOOL_A_RINGS_RX_PUSH
+	ETHTOOL_A_RINGS_TX_PUSH_BUF_LEN           = C.ETHTOOL_A_RINGS_TX_PUSH_BUF_LEN
+	ETHTOOL_A_RINGS_TX_PUSH_BUF_LEN_MAX       = C.ETHTOOL_A_RINGS_TX_PUSH_BUF_LEN_MAX
+	ETHTOOL_A_RINGS_HDS_THRESH                = C.ETHTOOL_A_RINGS_HDS_THRESH
+	ETHTOOL_A_RINGS_HDS_THRESH_MAX            = C.ETHTOOL_A_RINGS_HDS_THRESH_MAX
 	ETHTOOL_A_RINGS_MAX                       = C.ETHTOOL_A_RINGS_MAX
 	ETHTOOL_A_CHANNELS_UNSPEC                 = C.ETHTOOL_A_CHANNELS_UNSPEC
 	ETHTOOL_A_CHANNELS_HEADER                 = C.ETHTOOL_A_CHANNELS_HEADER
@@ -3710,6 +4122,8 @@ const (
 	ETHTOOL_A_TSINFO_TX_TYPES                 = C.ETHTOOL_A_TSINFO_TX_TYPES
 	ETHTOOL_A_TSINFO_RX_FILTERS               = C.ETHTOOL_A_TSINFO_RX_FILTERS
 	ETHTOOL_A_TSINFO_PHC_INDEX                = C.ETHTOOL_A_TSINFO_PHC_INDEX
+	ETHTOOL_A_TSINFO_STATS                    = C.ETHTOOL_A_TSINFO_STATS
+	ETHTOOL_A_TSINFO_HWTSTAMP_PROVIDER        = C.ETHTOOL_A_TSINFO_HWTSTAMP_PROVIDER
 	ETHTOOL_A_TSINFO_MAX                      = C.ETHTOOL_A_TSINFO_MAX
 	ETHTOOL_A_CABLE_TEST_UNSPEC               = C.ETHTOOL_A_CABLE_TEST_UNSPEC
 	ETHTOOL_A_CABLE_TEST_HEADER               = C.ETHTOOL_A_CABLE_TEST_HEADER
@@ -3796,9 +4210,71 @@ const (
 	ETHTOOL_A_TUNNEL_INFO_MAX                 = C.ETHTOOL_A_TUNNEL_INFO_MAX
 )
 
+const (
+	TCP_V4_FLOW    = C.TCP_V4_FLOW
+	UDP_V4_FLOW    = C.UDP_V4_FLOW
+	TCP_V6_FLOW    = C.TCP_V6_FLOW
+	UDP_V6_FLOW    = C.UDP_V6_FLOW
+	ESP_V4_FLOW    = C.ESP_V4_FLOW
+	ESP_V6_FLOW    = C.ESP_V6_FLOW
+	IP_USER_FLOW   = C.IP_USER_FLOW
+	IPV6_USER_FLOW = C.IPV6_USER_FLOW
+	IPV6_FLOW      = C.IPV6_FLOW
+	ETHER_FLOW     = C.ETHER_FLOW
+)
+
 const SPEED_UNKNOWN = C.SPEED_UNKNOWN
 
 type EthtoolDrvinfo C.struct_ethtool_drvinfo
+
+type EthtoolTsInfo C.struct_ethtool_ts_info
+
+type HwTstampConfig C.struct_hwtstamp_config
+
+const (
+	HWTSTAMP_FILTER_NONE                = C.HWTSTAMP_FILTER_NONE
+	HWTSTAMP_FILTER_ALL                 = C.HWTSTAMP_FILTER_ALL
+	HWTSTAMP_FILTER_SOME                = C.HWTSTAMP_FILTER_SOME
+	HWTSTAMP_FILTER_PTP_V1_L4_EVENT     = C.HWTSTAMP_FILTER_PTP_V1_L4_EVENT
+	HWTSTAMP_FILTER_PTP_V1_L4_SYNC      = C.HWTSTAMP_FILTER_PTP_V1_L4_SYNC
+	HWTSTAMP_FILTER_PTP_V1_L4_DELAY_REQ = C.HWTSTAMP_FILTER_PTP_V1_L4_DELAY_REQ
+	HWTSTAMP_FILTER_PTP_V2_L4_EVENT     = C.HWTSTAMP_FILTER_PTP_V2_L4_EVENT
+	HWTSTAMP_FILTER_PTP_V2_L4_SYNC      = C.HWTSTAMP_FILTER_PTP_V2_L4_SYNC
+	HWTSTAMP_FILTER_PTP_V2_L4_DELAY_REQ = C.HWTSTAMP_FILTER_PTP_V2_L4_DELAY_REQ
+	HWTSTAMP_FILTER_PTP_V2_L2_EVENT     = C.HWTSTAMP_FILTER_PTP_V2_L2_EVENT
+	HWTSTAMP_FILTER_PTP_V2_L2_SYNC      = C.HWTSTAMP_FILTER_PTP_V2_L2_SYNC
+	HWTSTAMP_FILTER_PTP_V2_L2_DELAY_REQ = C.HWTSTAMP_FILTER_PTP_V2_L2_DELAY_REQ
+	HWTSTAMP_FILTER_PTP_V2_EVENT        = C.HWTSTAMP_FILTER_PTP_V2_EVENT
+	HWTSTAMP_FILTER_PTP_V2_SYNC         = C.HWTSTAMP_FILTER_PTP_V2_SYNC
+	HWTSTAMP_FILTER_PTP_V2_DELAY_REQ    = C.HWTSTAMP_FILTER_PTP_V2_DELAY_REQ
+	HWTSTAMP_FILTER_NTP_ALL             = C.HWTSTAMP_FILTER_NTP_ALL
+)
+
+const (
+	HWTSTAMP_TX_OFF          = C.HWTSTAMP_TX_OFF
+	HWTSTAMP_TX_ON           = C.HWTSTAMP_TX_ON
+	HWTSTAMP_TX_ONESTEP_SYNC = C.HWTSTAMP_TX_ONESTEP_SYNC
+	HWTSTAMP_TX_ONESTEP_P2P  = C.HWTSTAMP_TX_ONESTEP_P2P
+)
+
+type (
+	PtpClockCaps         C.struct_ptp_clock_caps
+	PtpClockTime         C.struct_ptp_clock_time
+	PtpExttsEvent        C.struct_ptp_extts_event
+	PtpExttsRequest      C.struct_ptp_extts_request
+	PtpPeroutRequest     C.struct_my_ptp_perout_request
+	PtpPinDesc           C.struct_ptp_pin_desc
+	PtpSysOffset         C.struct_ptp_sys_offset
+	PtpSysOffsetExtended C.struct_ptp_sys_offset_extended
+	PtpSysOffsetPrecise  C.struct_ptp_sys_offset_precise
+)
+
+const (
+	PTP_PF_NONE    = C.PTP_PF_NONE
+	PTP_PF_EXTTS   = C.PTP_PF_EXTTS
+	PTP_PF_PEROUT  = C.PTP_PF_PEROUT
+	PTP_PF_PHYSYNC = C.PTP_PF_PHYSYNC
+)
 
 type (
 	HIDRawReportDescriptor C.struct_hidraw_report_descriptor
@@ -3931,10 +4407,46 @@ const (
 )
 
 // pidfd flags.
+//
+// Generated by:
+// perl -nlE '/^#define (PIDFD_\w+)/ && say "$1 uint32 = C.$1"' /usr/include/sys/pidfd.h
 
 const (
-	PIDFD_NONBLOCK = C.O_NONBLOCK
+	PIDFD_NONBLOCK                        = C.PIDFD_NONBLOCK
+	PIDFD_THREAD                          = C.PIDFD_THREAD
+	PIDFD_SIGNAL_THREAD                   = C.PIDFD_SIGNAL_THREAD
+	PIDFD_SIGNAL_THREAD_GROUP             = C.PIDFD_SIGNAL_THREAD_GROUP
+	PIDFD_SIGNAL_PROCESS_GROUP            = C.PIDFD_SIGNAL_PROCESS_GROUP
+	PIDFD_GET_CGROUP_NAMESPACE            = C.PIDFD_GET_CGROUP_NAMESPACE
+	PIDFD_GET_IPC_NAMESPACE               = C.PIDFD_GET_IPC_NAMESPACE
+	PIDFD_GET_MNT_NAMESPACE               = C.PIDFD_GET_MNT_NAMESPACE
+	PIDFD_GET_NET_NAMESPACE               = C.PIDFD_GET_NET_NAMESPACE
+	PIDFD_GET_PID_NAMESPACE               = C.PIDFD_GET_PID_NAMESPACE
+	PIDFD_GET_PID_FOR_CHILDREN_NAMESPACE  = C.PIDFD_GET_PID_FOR_CHILDREN_NAMESPACE
+	PIDFD_GET_TIME_NAMESPACE              = C.PIDFD_GET_TIME_NAMESPACE
+	PIDFD_GET_TIME_FOR_CHILDREN_NAMESPACE = C.PIDFD_GET_TIME_FOR_CHILDREN_NAMESPACE
+	PIDFD_GET_USER_NAMESPACE              = C.PIDFD_GET_USER_NAMESPACE
+	PIDFD_GET_UTS_NAMESPACE               = C.PIDFD_GET_UTS_NAMESPACE
+	PIDFD_SELF_THREAD                     = C.PIDFD_SELF_THREAD
+	PIDFD_SELF_THREAD_GROUP               = C.PIDFD_SELF_THREAD_GROUP
+	PIDFD_SELF                            = C.PIDFD_SELF
+	PIDFD_SELF_PROCESS                    = C.PIDFD_SELF_PROCESS
+	PIDFD_INFO_PID                        = C.PIDFD_INFO_PID
+	PIDFD_INFO_CREDS                      = C.PIDFD_INFO_CREDS
+	PIDFD_INFO_CGROUPID                   = C.PIDFD_INFO_CGROUPID
+	PIDFD_INFO_EXIT                       = C.PIDFD_INFO_EXIT
+	PIDFD_INFO_COREDUMP                   = C.PIDFD_INFO_COREDUMP
+	PIDFD_COREDUMPED                      = C.PIDFD_COREDUMPED
+	PIDFD_COREDUMP_SKIP                   = C.PIDFD_COREDUMP_SKIP
+	PIDFD_COREDUMP_USER                   = C.PIDFD_COREDUMP_USER
+	PIDFD_COREDUMP_ROOT                   = C.PIDFD_COREDUMP_ROOT
+	PIDFD_INFO_SIZE_VER0                  = C.PIDFD_INFO_SIZE_VER0
+	PIDFD_GET_INFO                        = C.PIDFD_GET_INFO
 )
+
+const SizeofPidfdInfo = C.sizeof_struct_pidfd_info
+
+type PidfdInfo C.struct_pidfd_info
 
 // shm
 
@@ -4113,6 +4625,9 @@ const (
 	NL80211_ACL_POLICY_DENY_UNLESS_LISTED                   = C.NL80211_ACL_POLICY_DENY_UNLESS_LISTED
 	NL80211_AC_VI                                           = C.NL80211_AC_VI
 	NL80211_AC_VO                                           = C.NL80211_AC_VO
+	NL80211_AP_SETTINGS_EXTERNAL_AUTH_SUPPORT               = C.NL80211_AP_SETTINGS_EXTERNAL_AUTH_SUPPORT
+	NL80211_AP_SETTINGS_SA_QUERY_OFFLOAD_SUPPORT            = C.NL80211_AP_SETTINGS_SA_QUERY_OFFLOAD_SUPPORT
+	NL80211_AP_SME_SA_QUERY_OFFLOAD                         = C.NL80211_AP_SME_SA_QUERY_OFFLOAD
 	NL80211_ATTR_4ADDR                                      = C.NL80211_ATTR_4ADDR
 	NL80211_ATTR_ACK                                        = C.NL80211_ATTR_ACK
 	NL80211_ATTR_ACK_SIGNAL                                 = C.NL80211_ATTR_ACK_SIGNAL
@@ -4121,6 +4636,8 @@ const (
 	NL80211_ATTR_AIRTIME_WEIGHT                             = C.NL80211_ATTR_AIRTIME_WEIGHT
 	NL80211_ATTR_AKM_SUITES                                 = C.NL80211_ATTR_AKM_SUITES
 	NL80211_ATTR_AP_ISOLATE                                 = C.NL80211_ATTR_AP_ISOLATE
+	NL80211_ATTR_AP_SETTINGS_FLAGS                          = C.NL80211_ATTR_AP_SETTINGS_FLAGS
+	NL80211_ATTR_ASSOC_SPP_AMSDU                            = C.NL80211_ATTR_ASSOC_SPP_AMSDU
 	NL80211_ATTR_AUTH_DATA                                  = C.NL80211_ATTR_AUTH_DATA
 	NL80211_ATTR_AUTH_TYPE                                  = C.NL80211_ATTR_AUTH_TYPE
 	NL80211_ATTR_BANDS                                      = C.NL80211_ATTR_BANDS
@@ -4131,6 +4648,7 @@ const (
 	NL80211_ATTR_BSS_BASIC_RATES                            = C.NL80211_ATTR_BSS_BASIC_RATES
 	NL80211_ATTR_BSS                                        = C.NL80211_ATTR_BSS
 	NL80211_ATTR_BSS_CTS_PROT                               = C.NL80211_ATTR_BSS_CTS_PROT
+	NL80211_ATTR_BSS_DUMP_INCLUDE_USE_DATA                  = C.NL80211_ATTR_BSS_DUMP_INCLUDE_USE_DATA
 	NL80211_ATTR_BSS_HT_OPMODE                              = C.NL80211_ATTR_BSS_HT_OPMODE
 	NL80211_ATTR_BSSID                                      = C.NL80211_ATTR_BSSID
 	NL80211_ATTR_BSS_SELECT                                 = C.NL80211_ATTR_BSS_SELECT
@@ -4152,6 +4670,9 @@ const (
 	NL80211_ATTR_COALESCE_RULE_DELAY                        = C.NL80211_ATTR_COALESCE_RULE_DELAY
 	NL80211_ATTR_COALESCE_RULE_MAX                          = C.NL80211_ATTR_COALESCE_RULE_MAX
 	NL80211_ATTR_COALESCE_RULE_PKT_PATTERN                  = C.NL80211_ATTR_COALESCE_RULE_PKT_PATTERN
+	NL80211_ATTR_COLOR_CHANGE_COLOR                         = C.NL80211_ATTR_COLOR_CHANGE_COLOR
+	NL80211_ATTR_COLOR_CHANGE_COUNT                         = C.NL80211_ATTR_COLOR_CHANGE_COUNT
+	NL80211_ATTR_COLOR_CHANGE_ELEMS                         = C.NL80211_ATTR_COLOR_CHANGE_ELEMS
 	NL80211_ATTR_CONN_FAILED_REASON                         = C.NL80211_ATTR_CONN_FAILED_REASON
 	NL80211_ATTR_CONTROL_PORT                               = C.NL80211_ATTR_CONTROL_PORT
 	NL80211_ATTR_CONTROL_PORT_ETHERTYPE                     = C.NL80211_ATTR_CONTROL_PORT_ETHERTYPE
@@ -4178,6 +4699,7 @@ const (
 	NL80211_ATTR_DEVICE_AP_SME                              = C.NL80211_ATTR_DEVICE_AP_SME
 	NL80211_ATTR_DFS_CAC_TIME                               = C.NL80211_ATTR_DFS_CAC_TIME
 	NL80211_ATTR_DFS_REGION                                 = C.NL80211_ATTR_DFS_REGION
+	NL80211_ATTR_DISABLE_EHT                                = C.NL80211_ATTR_DISABLE_EHT
 	NL80211_ATTR_DISABLE_HE                                 = C.NL80211_ATTR_DISABLE_HE
 	NL80211_ATTR_DISABLE_HT                                 = C.NL80211_ATTR_DISABLE_HT
 	NL80211_ATTR_DISABLE_VHT                                = C.NL80211_ATTR_DISABLE_VHT
@@ -4185,6 +4707,9 @@ const (
 	NL80211_ATTR_DONT_WAIT_FOR_ACK                          = C.NL80211_ATTR_DONT_WAIT_FOR_ACK
 	NL80211_ATTR_DTIM_PERIOD                                = C.NL80211_ATTR_DTIM_PERIOD
 	NL80211_ATTR_DURATION                                   = C.NL80211_ATTR_DURATION
+	NL80211_ATTR_EHT_CAPABILITY                             = C.NL80211_ATTR_EHT_CAPABILITY
+	NL80211_ATTR_EMA_RNR_ELEMS                              = C.NL80211_ATTR_EMA_RNR_ELEMS
+	NL80211_ATTR_EML_CAPABILITY                             = C.NL80211_ATTR_EML_CAPABILITY
 	NL80211_ATTR_EXT_CAPA                                   = C.NL80211_ATTR_EXT_CAPA
 	NL80211_ATTR_EXT_CAPA_MASK                              = C.NL80211_ATTR_EXT_CAPA_MASK
 	NL80211_ATTR_EXTERNAL_AUTH_ACTION                       = C.NL80211_ATTR_EXTERNAL_AUTH_ACTION
@@ -4219,6 +4744,7 @@ const (
 	NL80211_ATTR_HIDDEN_SSID                                = C.NL80211_ATTR_HIDDEN_SSID
 	NL80211_ATTR_HT_CAPABILITY                              = C.NL80211_ATTR_HT_CAPABILITY
 	NL80211_ATTR_HT_CAPABILITY_MASK                         = C.NL80211_ATTR_HT_CAPABILITY_MASK
+	NL80211_ATTR_HW_TIMESTAMP_ENABLED                       = C.NL80211_ATTR_HW_TIMESTAMP_ENABLED
 	NL80211_ATTR_IE_ASSOC_RESP                              = C.NL80211_ATTR_IE_ASSOC_RESP
 	NL80211_ATTR_IE                                         = C.NL80211_ATTR_IE
 	NL80211_ATTR_IE_PROBE_RESP                              = C.NL80211_ATTR_IE_PROBE_RESP
@@ -4252,7 +4778,9 @@ const (
 	NL80211_ATTR_MAX                                        = C.NL80211_ATTR_MAX
 	NL80211_ATTR_MAX_CRIT_PROT_DURATION                     = C.NL80211_ATTR_MAX_CRIT_PROT_DURATION
 	NL80211_ATTR_MAX_CSA_COUNTERS                           = C.NL80211_ATTR_MAX_CSA_COUNTERS
+	NL80211_ATTR_MAX_HW_TIMESTAMP_PEERS                     = C.NL80211_ATTR_MAX_HW_TIMESTAMP_PEERS
 	NL80211_ATTR_MAX_MATCH_SETS                             = C.NL80211_ATTR_MAX_MATCH_SETS
+	NL80211_ATTR_MAX_NUM_AKM_SUITES                         = C.NL80211_ATTR_MAX_NUM_AKM_SUITES
 	NL80211_ATTR_MAX_NUM_PMKIDS                             = C.NL80211_ATTR_MAX_NUM_PMKIDS
 	NL80211_ATTR_MAX_NUM_SCAN_SSIDS                         = C.NL80211_ATTR_MAX_NUM_SCAN_SSIDS
 	NL80211_ATTR_MAX_NUM_SCHED_SCAN_PLANS                   = C.NL80211_ATTR_MAX_NUM_SCHED_SCAN_PLANS
@@ -4262,6 +4790,8 @@ const (
 	NL80211_ATTR_MAX_SCAN_PLAN_INTERVAL                     = C.NL80211_ATTR_MAX_SCAN_PLAN_INTERVAL
 	NL80211_ATTR_MAX_SCAN_PLAN_ITERATIONS                   = C.NL80211_ATTR_MAX_SCAN_PLAN_ITERATIONS
 	NL80211_ATTR_MAX_SCHED_SCAN_IE_LEN                      = C.NL80211_ATTR_MAX_SCHED_SCAN_IE_LEN
+	NL80211_ATTR_MBSSID_CONFIG                              = C.NL80211_ATTR_MBSSID_CONFIG
+	NL80211_ATTR_MBSSID_ELEMS                               = C.NL80211_ATTR_MBSSID_ELEMS
 	NL80211_ATTR_MCAST_RATE                                 = C.NL80211_ATTR_MCAST_RATE
 	NL80211_ATTR_MDID                                       = C.NL80211_ATTR_MDID
 	NL80211_ATTR_MEASUREMENT_DURATION                       = C.NL80211_ATTR_MEASUREMENT_DURATION
@@ -4271,6 +4801,14 @@ const (
 	NL80211_ATTR_MESH_PEER_AID                              = C.NL80211_ATTR_MESH_PEER_AID
 	NL80211_ATTR_MESH_SETUP                                 = C.NL80211_ATTR_MESH_SETUP
 	NL80211_ATTR_MGMT_SUBTYPE                               = C.NL80211_ATTR_MGMT_SUBTYPE
+	NL80211_ATTR_MLD_ADDR                                   = C.NL80211_ATTR_MLD_ADDR
+	NL80211_ATTR_MLD_CAPA_AND_OPS                           = C.NL80211_ATTR_MLD_CAPA_AND_OPS
+	NL80211_ATTR_MLO_LINK_DISABLED                          = C.NL80211_ATTR_MLO_LINK_DISABLED
+	NL80211_ATTR_MLO_LINK_ID                                = C.NL80211_ATTR_MLO_LINK_ID
+	NL80211_ATTR_MLO_LINKS                                  = C.NL80211_ATTR_MLO_LINKS
+	NL80211_ATTR_MLO_SUPPORT                                = C.NL80211_ATTR_MLO_SUPPORT
+	NL80211_ATTR_MLO_TTLM_DLINK                             = C.NL80211_ATTR_MLO_TTLM_DLINK
+	NL80211_ATTR_MLO_TTLM_ULINK                             = C.NL80211_ATTR_MLO_TTLM_ULINK
 	NL80211_ATTR_MNTR_FLAGS                                 = C.NL80211_ATTR_MNTR_FLAGS
 	NL80211_ATTR_MPATH_INFO                                 = C.NL80211_ATTR_MPATH_INFO
 	NL80211_ATTR_MPATH_NEXT_HOP                             = C.NL80211_ATTR_MPATH_NEXT_HOP
@@ -4283,6 +4821,7 @@ const (
 	NL80211_ATTR_NETNS_FD                                   = C.NL80211_ATTR_NETNS_FD
 	NL80211_ATTR_NOACK_MAP                                  = C.NL80211_ATTR_NOACK_MAP
 	NL80211_ATTR_NSS                                        = C.NL80211_ATTR_NSS
+	NL80211_ATTR_OBSS_COLOR_BITMAP                          = C.NL80211_ATTR_OBSS_COLOR_BITMAP
 	NL80211_ATTR_OFFCHANNEL_TX_OK                           = C.NL80211_ATTR_OFFCHANNEL_TX_OK
 	NL80211_ATTR_OPER_CLASS                                 = C.NL80211_ATTR_OPER_CLASS
 	NL80211_ATTR_OPMODE_NOTIF                               = C.NL80211_ATTR_OPMODE_NOTIF
@@ -4302,13 +4841,16 @@ const (
 	NL80211_ATTR_PORT_AUTHORIZED                            = C.NL80211_ATTR_PORT_AUTHORIZED
 	NL80211_ATTR_POWER_RULE_MAX_ANT_GAIN                    = C.NL80211_ATTR_POWER_RULE_MAX_ANT_GAIN
 	NL80211_ATTR_POWER_RULE_MAX_EIRP                        = C.NL80211_ATTR_POWER_RULE_MAX_EIRP
+	NL80211_ATTR_POWER_RULE_PSD                             = C.NL80211_ATTR_POWER_RULE_PSD
 	NL80211_ATTR_PREV_BSSID                                 = C.NL80211_ATTR_PREV_BSSID
 	NL80211_ATTR_PRIVACY                                    = C.NL80211_ATTR_PRIVACY
 	NL80211_ATTR_PROBE_RESP                                 = C.NL80211_ATTR_PROBE_RESP
 	NL80211_ATTR_PROBE_RESP_OFFLOAD                         = C.NL80211_ATTR_PROBE_RESP_OFFLOAD
 	NL80211_ATTR_PROTOCOL_FEATURES                          = C.NL80211_ATTR_PROTOCOL_FEATURES
 	NL80211_ATTR_PS_STATE                                   = C.NL80211_ATTR_PS_STATE
+	NL80211_ATTR_PUNCT_BITMAP                               = C.NL80211_ATTR_PUNCT_BITMAP
 	NL80211_ATTR_QOS_MAP                                    = C.NL80211_ATTR_QOS_MAP
+	NL80211_ATTR_RADAR_BACKGROUND                           = C.NL80211_ATTR_RADAR_BACKGROUND
 	NL80211_ATTR_RADAR_EVENT                                = C.NL80211_ATTR_RADAR_EVENT
 	NL80211_ATTR_REASON_CODE                                = C.NL80211_ATTR_REASON_CODE
 	NL80211_ATTR_RECEIVE_MULTICAST                          = C.NL80211_ATTR_RECEIVE_MULTICAST
@@ -4324,6 +4866,7 @@ const (
 	NL80211_ATTR_RESP_IE                                    = C.NL80211_ATTR_RESP_IE
 	NL80211_ATTR_ROAM_SUPPORT                               = C.NL80211_ATTR_ROAM_SUPPORT
 	NL80211_ATTR_RX_FRAME_TYPES                             = C.NL80211_ATTR_RX_FRAME_TYPES
+	NL80211_ATTR_RX_HW_TIMESTAMP                            = C.NL80211_ATTR_RX_HW_TIMESTAMP
 	NL80211_ATTR_RXMGMT_FLAGS                               = C.NL80211_ATTR_RXMGMT_FLAGS
 	NL80211_ATTR_RX_SIGNAL_DBM                              = C.NL80211_ATTR_RX_SIGNAL_DBM
 	NL80211_ATTR_S1G_CAPABILITY                             = C.NL80211_ATTR_S1G_CAPABILITY
@@ -4381,6 +4924,7 @@ const (
 	NL80211_ATTR_SUPPORT_MESH_AUTH                          = C.NL80211_ATTR_SUPPORT_MESH_AUTH
 	NL80211_ATTR_SURVEY_INFO                                = C.NL80211_ATTR_SURVEY_INFO
 	NL80211_ATTR_SURVEY_RADIO_STATS                         = C.NL80211_ATTR_SURVEY_RADIO_STATS
+	NL80211_ATTR_TD_BITMAP                                  = C.NL80211_ATTR_TD_BITMAP
 	NL80211_ATTR_TDLS_ACTION                                = C.NL80211_ATTR_TDLS_ACTION
 	NL80211_ATTR_TDLS_DIALOG_TOKEN                          = C.NL80211_ATTR_TDLS_DIALOG_TOKEN
 	NL80211_ATTR_TDLS_EXTERNAL_SETUP                        = C.NL80211_ATTR_TDLS_EXTERNAL_SETUP
@@ -4396,6 +4940,7 @@ const (
 	NL80211_ATTR_TSID                                       = C.NL80211_ATTR_TSID
 	NL80211_ATTR_TWT_RESPONDER                              = C.NL80211_ATTR_TWT_RESPONDER
 	NL80211_ATTR_TX_FRAME_TYPES                             = C.NL80211_ATTR_TX_FRAME_TYPES
+	NL80211_ATTR_TX_HW_TIMESTAMP                            = C.NL80211_ATTR_TX_HW_TIMESTAMP
 	NL80211_ATTR_TX_NO_CCK_RATE                             = C.NL80211_ATTR_TX_NO_CCK_RATE
 	NL80211_ATTR_TXQ_LIMIT                                  = C.NL80211_ATTR_TXQ_LIMIT
 	NL80211_ATTR_TXQ_MEMORY_LIMIT                           = C.NL80211_ATTR_TXQ_MEMORY_LIMIT
@@ -4432,7 +4977,9 @@ const (
 	NL80211_ATTR_WIPHY_FREQ                                 = C.NL80211_ATTR_WIPHY_FREQ
 	NL80211_ATTR_WIPHY_FREQ_HINT                            = C.NL80211_ATTR_WIPHY_FREQ_HINT
 	NL80211_ATTR_WIPHY_FREQ_OFFSET                          = C.NL80211_ATTR_WIPHY_FREQ_OFFSET
+	NL80211_ATTR_WIPHY_INTERFACE_COMBINATIONS               = C.NL80211_ATTR_WIPHY_INTERFACE_COMBINATIONS
 	NL80211_ATTR_WIPHY_NAME                                 = C.NL80211_ATTR_WIPHY_NAME
+	NL80211_ATTR_WIPHY_RADIOS                               = C.NL80211_ATTR_WIPHY_RADIOS
 	NL80211_ATTR_WIPHY_RETRY_LONG                           = C.NL80211_ATTR_WIPHY_RETRY_LONG
 	NL80211_ATTR_WIPHY_RETRY_SHORT                          = C.NL80211_ATTR_WIPHY_RETRY_SHORT
 	NL80211_ATTR_WIPHY_RTS_THRESHOLD                        = C.NL80211_ATTR_WIPHY_RTS_THRESHOLD
@@ -4467,8 +5014,14 @@ const (
 	NL80211_BAND_ATTR_IFTYPE_DATA                           = C.NL80211_BAND_ATTR_IFTYPE_DATA
 	NL80211_BAND_ATTR_MAX                                   = C.NL80211_BAND_ATTR_MAX
 	NL80211_BAND_ATTR_RATES                                 = C.NL80211_BAND_ATTR_RATES
+	NL80211_BAND_ATTR_S1G_CAPA                              = C.NL80211_BAND_ATTR_S1G_CAPA
+	NL80211_BAND_ATTR_S1G_MCS_NSS_SET                       = C.NL80211_BAND_ATTR_S1G_MCS_NSS_SET
 	NL80211_BAND_ATTR_VHT_CAPA                              = C.NL80211_BAND_ATTR_VHT_CAPA
 	NL80211_BAND_ATTR_VHT_MCS_SET                           = C.NL80211_BAND_ATTR_VHT_MCS_SET
+	NL80211_BAND_IFTYPE_ATTR_EHT_CAP_MAC                    = C.NL80211_BAND_IFTYPE_ATTR_EHT_CAP_MAC
+	NL80211_BAND_IFTYPE_ATTR_EHT_CAP_MCS_SET                = C.NL80211_BAND_IFTYPE_ATTR_EHT_CAP_MCS_SET
+	NL80211_BAND_IFTYPE_ATTR_EHT_CAP_PHY                    = C.NL80211_BAND_IFTYPE_ATTR_EHT_CAP_PHY
+	NL80211_BAND_IFTYPE_ATTR_EHT_CAP_PPE                    = C.NL80211_BAND_IFTYPE_ATTR_EHT_CAP_PPE
 	NL80211_BAND_IFTYPE_ATTR_HE_6GHZ_CAPA                   = C.NL80211_BAND_IFTYPE_ATTR_HE_6GHZ_CAPA
 	NL80211_BAND_IFTYPE_ATTR_HE_CAP_MAC                     = C.NL80211_BAND_IFTYPE_ATTR_HE_CAP_MAC
 	NL80211_BAND_IFTYPE_ATTR_HE_CAP_MCS_SET                 = C.NL80211_BAND_IFTYPE_ATTR_HE_CAP_MCS_SET
@@ -4476,6 +5029,8 @@ const (
 	NL80211_BAND_IFTYPE_ATTR_HE_CAP_PPE                     = C.NL80211_BAND_IFTYPE_ATTR_HE_CAP_PPE
 	NL80211_BAND_IFTYPE_ATTR_IFTYPES                        = C.NL80211_BAND_IFTYPE_ATTR_IFTYPES
 	NL80211_BAND_IFTYPE_ATTR_MAX                            = C.NL80211_BAND_IFTYPE_ATTR_MAX
+	NL80211_BAND_IFTYPE_ATTR_VENDOR_ELEMS                   = C.NL80211_BAND_IFTYPE_ATTR_VENDOR_ELEMS
+	NL80211_BAND_LC                                         = C.NL80211_BAND_LC
 	NL80211_BAND_S1GHZ                                      = C.NL80211_BAND_S1GHZ
 	NL80211_BITRATE_ATTR_2GHZ_SHORTPREAMBLE                 = C.NL80211_BITRATE_ATTR_2GHZ_SHORTPREAMBLE
 	NL80211_BITRATE_ATTR_MAX                                = C.NL80211_BITRATE_ATTR_MAX
@@ -4484,6 +5039,10 @@ const (
 	NL80211_BSS_BEACON_INTERVAL                             = C.NL80211_BSS_BEACON_INTERVAL
 	NL80211_BSS_BEACON_TSF                                  = C.NL80211_BSS_BEACON_TSF
 	NL80211_BSS_BSSID                                       = C.NL80211_BSS_BSSID
+	NL80211_BSS_CANNOT_USE_6GHZ_PWR_MISMATCH                = C.NL80211_BSS_CANNOT_USE_6GHZ_PWR_MISMATCH
+	NL80211_BSS_CANNOT_USE_NSTR_NONPRIMARY                  = C.NL80211_BSS_CANNOT_USE_NSTR_NONPRIMARY
+	NL80211_BSS_CANNOT_USE_REASONS                          = C.NL80211_BSS_CANNOT_USE_REASONS
+	NL80211_BSS_CANNOT_USE_UHB_PWR_MISMATCH                 = C.NL80211_BSS_CANNOT_USE_UHB_PWR_MISMATCH
 	NL80211_BSS_CAPABILITY                                  = C.NL80211_BSS_CAPABILITY
 	NL80211_BSS_CHAIN_SIGNAL                                = C.NL80211_BSS_CHAIN_SIGNAL
 	NL80211_BSS_CHAN_WIDTH_10                               = C.NL80211_BSS_CHAN_WIDTH_10
@@ -4497,6 +5056,8 @@ const (
 	NL80211_BSS_INFORMATION_ELEMENTS                        = C.NL80211_BSS_INFORMATION_ELEMENTS
 	NL80211_BSS_LAST_SEEN_BOOTTIME                          = C.NL80211_BSS_LAST_SEEN_BOOTTIME
 	NL80211_BSS_MAX                                         = C.NL80211_BSS_MAX
+	NL80211_BSS_MLD_ADDR                                    = C.NL80211_BSS_MLD_ADDR
+	NL80211_BSS_MLO_LINK_ID                                 = C.NL80211_BSS_MLO_LINK_ID
 	NL80211_BSS_PAD                                         = C.NL80211_BSS_PAD
 	NL80211_BSS_PARENT_BSSID                                = C.NL80211_BSS_PARENT_BSSID
 	NL80211_BSS_PARENT_TSF                                  = C.NL80211_BSS_PARENT_TSF
@@ -4513,6 +5074,9 @@ const (
 	NL80211_BSS_STATUS                                      = C.NL80211_BSS_STATUS
 	NL80211_BSS_STATUS_IBSS_JOINED                          = C.NL80211_BSS_STATUS_IBSS_JOINED
 	NL80211_BSS_TSF                                         = C.NL80211_BSS_TSF
+	NL80211_BSS_USE_FOR                                     = C.NL80211_BSS_USE_FOR
+	NL80211_BSS_USE_FOR_MLD_LINK                            = C.NL80211_BSS_USE_FOR_MLD_LINK
+	NL80211_BSS_USE_FOR_NORMAL                              = C.NL80211_BSS_USE_FOR_NORMAL
 	NL80211_CHAN_HT20                                       = C.NL80211_CHAN_HT20
 	NL80211_CHAN_HT40MINUS                                  = C.NL80211_CHAN_HT40MINUS
 	NL80211_CHAN_HT40PLUS                                   = C.NL80211_CHAN_HT40PLUS
@@ -4524,6 +5088,7 @@ const (
 	NL80211_CHAN_WIDTH_20                                   = C.NL80211_CHAN_WIDTH_20
 	NL80211_CHAN_WIDTH_20_NOHT                              = C.NL80211_CHAN_WIDTH_20_NOHT
 	NL80211_CHAN_WIDTH_2                                    = C.NL80211_CHAN_WIDTH_2
+	NL80211_CHAN_WIDTH_320                                  = C.NL80211_CHAN_WIDTH_320
 	NL80211_CHAN_WIDTH_40                                   = C.NL80211_CHAN_WIDTH_40
 	NL80211_CHAN_WIDTH_4                                    = C.NL80211_CHAN_WIDTH_4
 	NL80211_CHAN_WIDTH_5                                    = C.NL80211_CHAN_WIDTH_5
@@ -4533,8 +5098,11 @@ const (
 	NL80211_CMD_ABORT_SCAN                                  = C.NL80211_CMD_ABORT_SCAN
 	NL80211_CMD_ACTION                                      = C.NL80211_CMD_ACTION
 	NL80211_CMD_ACTION_TX_STATUS                            = C.NL80211_CMD_ACTION_TX_STATUS
+	NL80211_CMD_ADD_LINK                                    = C.NL80211_CMD_ADD_LINK
+	NL80211_CMD_ADD_LINK_STA                                = C.NL80211_CMD_ADD_LINK_STA
 	NL80211_CMD_ADD_NAN_FUNCTION                            = C.NL80211_CMD_ADD_NAN_FUNCTION
 	NL80211_CMD_ADD_TX_TS                                   = C.NL80211_CMD_ADD_TX_TS
+	NL80211_CMD_ASSOC_COMEBACK                              = C.NL80211_CMD_ASSOC_COMEBACK
 	NL80211_CMD_ASSOCIATE                                   = C.NL80211_CMD_ASSOCIATE
 	NL80211_CMD_AUTHENTICATE                                = C.NL80211_CMD_AUTHENTICATE
 	NL80211_CMD_CANCEL_REMAIN_ON_CHANNEL                    = C.NL80211_CMD_CANCEL_REMAIN_ON_CHANNEL
@@ -4542,6 +5110,10 @@ const (
 	NL80211_CMD_CHANNEL_SWITCH                              = C.NL80211_CMD_CHANNEL_SWITCH
 	NL80211_CMD_CH_SWITCH_NOTIFY                            = C.NL80211_CMD_CH_SWITCH_NOTIFY
 	NL80211_CMD_CH_SWITCH_STARTED_NOTIFY                    = C.NL80211_CMD_CH_SWITCH_STARTED_NOTIFY
+	NL80211_CMD_COLOR_CHANGE_ABORTED                        = C.NL80211_CMD_COLOR_CHANGE_ABORTED
+	NL80211_CMD_COLOR_CHANGE_COMPLETED                      = C.NL80211_CMD_COLOR_CHANGE_COMPLETED
+	NL80211_CMD_COLOR_CHANGE_REQUEST                        = C.NL80211_CMD_COLOR_CHANGE_REQUEST
+	NL80211_CMD_COLOR_CHANGE_STARTED                        = C.NL80211_CMD_COLOR_CHANGE_STARTED
 	NL80211_CMD_CONNECT                                     = C.NL80211_CMD_CONNECT
 	NL80211_CMD_CONN_FAILED                                 = C.NL80211_CMD_CONN_FAILED
 	NL80211_CMD_CONTROL_PORT_FRAME                          = C.NL80211_CMD_CONTROL_PORT_FRAME
@@ -4590,8 +5162,10 @@ const (
 	NL80211_CMD_LEAVE_IBSS                                  = C.NL80211_CMD_LEAVE_IBSS
 	NL80211_CMD_LEAVE_MESH                                  = C.NL80211_CMD_LEAVE_MESH
 	NL80211_CMD_LEAVE_OCB                                   = C.NL80211_CMD_LEAVE_OCB
+	NL80211_CMD_LINKS_REMOVED                               = C.NL80211_CMD_LINKS_REMOVED
 	NL80211_CMD_MAX                                         = C.NL80211_CMD_MAX
 	NL80211_CMD_MICHAEL_MIC_FAILURE                         = C.NL80211_CMD_MICHAEL_MIC_FAILURE
+	NL80211_CMD_MODIFY_LINK_STA                             = C.NL80211_CMD_MODIFY_LINK_STA
 	NL80211_CMD_NAN_MATCH                                   = C.NL80211_CMD_NAN_MATCH
 	NL80211_CMD_NEW_BEACON                                  = C.NL80211_CMD_NEW_BEACON
 	NL80211_CMD_NEW_INTERFACE                               = C.NL80211_CMD_NEW_INTERFACE
@@ -4604,6 +5178,7 @@ const (
 	NL80211_CMD_NEW_WIPHY                                   = C.NL80211_CMD_NEW_WIPHY
 	NL80211_CMD_NOTIFY_CQM                                  = C.NL80211_CMD_NOTIFY_CQM
 	NL80211_CMD_NOTIFY_RADAR                                = C.NL80211_CMD_NOTIFY_RADAR
+	NL80211_CMD_OBSS_COLOR_COLLISION                        = C.NL80211_CMD_OBSS_COLOR_COLLISION
 	NL80211_CMD_PEER_MEASUREMENT_COMPLETE                   = C.NL80211_CMD_PEER_MEASUREMENT_COMPLETE
 	NL80211_CMD_PEER_MEASUREMENT_RESULT                     = C.NL80211_CMD_PEER_MEASUREMENT_RESULT
 	NL80211_CMD_PEER_MEASUREMENT_START                      = C.NL80211_CMD_PEER_MEASUREMENT_START
@@ -4619,6 +5194,8 @@ const (
 	NL80211_CMD_REGISTER_FRAME                              = C.NL80211_CMD_REGISTER_FRAME
 	NL80211_CMD_RELOAD_REGDB                                = C.NL80211_CMD_RELOAD_REGDB
 	NL80211_CMD_REMAIN_ON_CHANNEL                           = C.NL80211_CMD_REMAIN_ON_CHANNEL
+	NL80211_CMD_REMOVE_LINK                                 = C.NL80211_CMD_REMOVE_LINK
+	NL80211_CMD_REMOVE_LINK_STA                             = C.NL80211_CMD_REMOVE_LINK_STA
 	NL80211_CMD_REQ_SET_REG                                 = C.NL80211_CMD_REQ_SET_REG
 	NL80211_CMD_ROAM                                        = C.NL80211_CMD_ROAM
 	NL80211_CMD_SCAN_ABORTED                                = C.NL80211_CMD_SCAN_ABORTED
@@ -4629,6 +5206,8 @@ const (
 	NL80211_CMD_SET_CHANNEL                                 = C.NL80211_CMD_SET_CHANNEL
 	NL80211_CMD_SET_COALESCE                                = C.NL80211_CMD_SET_COALESCE
 	NL80211_CMD_SET_CQM                                     = C.NL80211_CMD_SET_CQM
+	NL80211_CMD_SET_FILS_AAD                                = C.NL80211_CMD_SET_FILS_AAD
+	NL80211_CMD_SET_HW_TIMESTAMP                            = C.NL80211_CMD_SET_HW_TIMESTAMP
 	NL80211_CMD_SET_INTERFACE                               = C.NL80211_CMD_SET_INTERFACE
 	NL80211_CMD_SET_KEY                                     = C.NL80211_CMD_SET_KEY
 	NL80211_CMD_SET_MAC_ACL                                 = C.NL80211_CMD_SET_MAC_ACL
@@ -4648,6 +5227,7 @@ const (
 	NL80211_CMD_SET_SAR_SPECS                               = C.NL80211_CMD_SET_SAR_SPECS
 	NL80211_CMD_SET_STATION                                 = C.NL80211_CMD_SET_STATION
 	NL80211_CMD_SET_TID_CONFIG                              = C.NL80211_CMD_SET_TID_CONFIG
+	NL80211_CMD_SET_TID_TO_LINK_MAPPING                     = C.NL80211_CMD_SET_TID_TO_LINK_MAPPING
 	NL80211_CMD_SET_TX_BITRATE_MASK                         = C.NL80211_CMD_SET_TX_BITRATE_MASK
 	NL80211_CMD_SET_WDS_PEER                                = C.NL80211_CMD_SET_WDS_PEER
 	NL80211_CMD_SET_WIPHY                                   = C.NL80211_CMD_SET_WIPHY
@@ -4703,6 +5283,8 @@ const (
 	NL80211_EDMG_BW_CONFIG_MIN                              = C.NL80211_EDMG_BW_CONFIG_MIN
 	NL80211_EDMG_CHANNELS_MAX                               = C.NL80211_EDMG_CHANNELS_MAX
 	NL80211_EDMG_CHANNELS_MIN                               = C.NL80211_EDMG_CHANNELS_MIN
+	NL80211_EHT_MAX_CAPABILITY_LEN                          = C.NL80211_EHT_MAX_CAPABILITY_LEN
+	NL80211_EHT_MIN_CAPABILITY_LEN                          = C.NL80211_EHT_MIN_CAPABILITY_LEN
 	NL80211_EXTERNAL_AUTH_ABORT                             = C.NL80211_EXTERNAL_AUTH_ABORT
 	NL80211_EXTERNAL_AUTH_START                             = C.NL80211_EXTERNAL_AUTH_START
 	NL80211_EXT_FEATURE_4WAY_HANDSHAKE_AP_PSK               = C.NL80211_EXT_FEATURE_4WAY_HANDSHAKE_AP_PSK
@@ -4713,12 +5295,14 @@ const (
 	NL80211_EXT_FEATURE_AIRTIME_FAIRNESS                    = C.NL80211_EXT_FEATURE_AIRTIME_FAIRNESS
 	NL80211_EXT_FEATURE_AP_PMKSA_CACHING                    = C.NL80211_EXT_FEATURE_AP_PMKSA_CACHING
 	NL80211_EXT_FEATURE_AQL                                 = C.NL80211_EXT_FEATURE_AQL
+	NL80211_EXT_FEATURE_AUTH_AND_DEAUTH_RANDOM_TA           = C.NL80211_EXT_FEATURE_AUTH_AND_DEAUTH_RANDOM_TA
 	NL80211_EXT_FEATURE_BEACON_PROTECTION_CLIENT            = C.NL80211_EXT_FEATURE_BEACON_PROTECTION_CLIENT
 	NL80211_EXT_FEATURE_BEACON_PROTECTION                   = C.NL80211_EXT_FEATURE_BEACON_PROTECTION
 	NL80211_EXT_FEATURE_BEACON_RATE_HE                      = C.NL80211_EXT_FEATURE_BEACON_RATE_HE
 	NL80211_EXT_FEATURE_BEACON_RATE_HT                      = C.NL80211_EXT_FEATURE_BEACON_RATE_HT
 	NL80211_EXT_FEATURE_BEACON_RATE_LEGACY                  = C.NL80211_EXT_FEATURE_BEACON_RATE_LEGACY
 	NL80211_EXT_FEATURE_BEACON_RATE_VHT                     = C.NL80211_EXT_FEATURE_BEACON_RATE_VHT
+	NL80211_EXT_FEATURE_BSS_COLOR                           = C.NL80211_EXT_FEATURE_BSS_COLOR
 	NL80211_EXT_FEATURE_BSS_PARENT_TSF                      = C.NL80211_EXT_FEATURE_BSS_PARENT_TSF
 	NL80211_EXT_FEATURE_CAN_REPLACE_PTK0                    = C.NL80211_EXT_FEATURE_CAN_REPLACE_PTK0
 	NL80211_EXT_FEATURE_CONTROL_PORT_NO_PREAUTH             = C.NL80211_EXT_FEATURE_CONTROL_PORT_NO_PREAUTH
@@ -4727,9 +5311,11 @@ const (
 	NL80211_EXT_FEATURE_CQM_RSSI_LIST                       = C.NL80211_EXT_FEATURE_CQM_RSSI_LIST
 	NL80211_EXT_FEATURE_DATA_ACK_SIGNAL_SUPPORT             = C.NL80211_EXT_FEATURE_DATA_ACK_SIGNAL_SUPPORT
 	NL80211_EXT_FEATURE_DEL_IBSS_STA                        = C.NL80211_EXT_FEATURE_DEL_IBSS_STA
+	NL80211_EXT_FEATURE_DFS_CONCURRENT                      = C.NL80211_EXT_FEATURE_DFS_CONCURRENT
 	NL80211_EXT_FEATURE_DFS_OFFLOAD                         = C.NL80211_EXT_FEATURE_DFS_OFFLOAD
 	NL80211_EXT_FEATURE_ENABLE_FTM_RESPONDER                = C.NL80211_EXT_FEATURE_ENABLE_FTM_RESPONDER
 	NL80211_EXT_FEATURE_EXT_KEY_ID                          = C.NL80211_EXT_FEATURE_EXT_KEY_ID
+	NL80211_EXT_FEATURE_FILS_CRYPTO_OFFLOAD                 = C.NL80211_EXT_FEATURE_FILS_CRYPTO_OFFLOAD
 	NL80211_EXT_FEATURE_FILS_DISCOVERY                      = C.NL80211_EXT_FEATURE_FILS_DISCOVERY
 	NL80211_EXT_FEATURE_FILS_MAX_CHANNEL_TIME               = C.NL80211_EXT_FEATURE_FILS_MAX_CHANNEL_TIME
 	NL80211_EXT_FEATURE_FILS_SK_OFFLOAD                     = C.NL80211_EXT_FEATURE_FILS_SK_OFFLOAD
@@ -4745,8 +5331,13 @@ const (
 	NL80211_EXT_FEATURE_OCE_PROBE_REQ_DEFERRAL_SUPPRESSION  = C.NL80211_EXT_FEATURE_OCE_PROBE_REQ_DEFERRAL_SUPPRESSION
 	NL80211_EXT_FEATURE_OCE_PROBE_REQ_HIGH_TX_RATE          = C.NL80211_EXT_FEATURE_OCE_PROBE_REQ_HIGH_TX_RATE
 	NL80211_EXT_FEATURE_OPERATING_CHANNEL_VALIDATION        = C.NL80211_EXT_FEATURE_OPERATING_CHANNEL_VALIDATION
+	NL80211_EXT_FEATURE_OWE_OFFLOAD_AP                      = C.NL80211_EXT_FEATURE_OWE_OFFLOAD_AP
+	NL80211_EXT_FEATURE_OWE_OFFLOAD                         = C.NL80211_EXT_FEATURE_OWE_OFFLOAD
+	NL80211_EXT_FEATURE_POWERED_ADDR_CHANGE                 = C.NL80211_EXT_FEATURE_POWERED_ADDR_CHANGE
 	NL80211_EXT_FEATURE_PROTECTED_TWT                       = C.NL80211_EXT_FEATURE_PROTECTED_TWT
 	NL80211_EXT_FEATURE_PROT_RANGE_NEGO_AND_MEASURE         = C.NL80211_EXT_FEATURE_PROT_RANGE_NEGO_AND_MEASURE
+	NL80211_EXT_FEATURE_PUNCT                               = C.NL80211_EXT_FEATURE_PUNCT
+	NL80211_EXT_FEATURE_RADAR_BACKGROUND                    = C.NL80211_EXT_FEATURE_RADAR_BACKGROUND
 	NL80211_EXT_FEATURE_RRM                                 = C.NL80211_EXT_FEATURE_RRM
 	NL80211_EXT_FEATURE_SAE_OFFLOAD_AP                      = C.NL80211_EXT_FEATURE_SAE_OFFLOAD_AP
 	NL80211_EXT_FEATURE_SAE_OFFLOAD                         = C.NL80211_EXT_FEATURE_SAE_OFFLOAD
@@ -4757,8 +5348,10 @@ const (
 	NL80211_EXT_FEATURE_SCHED_SCAN_BAND_SPECIFIC_RSSI_THOLD = C.NL80211_EXT_FEATURE_SCHED_SCAN_BAND_SPECIFIC_RSSI_THOLD
 	NL80211_EXT_FEATURE_SCHED_SCAN_RELATIVE_RSSI            = C.NL80211_EXT_FEATURE_SCHED_SCAN_RELATIVE_RSSI
 	NL80211_EXT_FEATURE_SECURE_LTF                          = C.NL80211_EXT_FEATURE_SECURE_LTF
+	NL80211_EXT_FEATURE_SECURE_NAN                          = C.NL80211_EXT_FEATURE_SECURE_NAN
 	NL80211_EXT_FEATURE_SECURE_RTT                          = C.NL80211_EXT_FEATURE_SECURE_RTT
 	NL80211_EXT_FEATURE_SET_SCAN_DWELL                      = C.NL80211_EXT_FEATURE_SET_SCAN_DWELL
+	NL80211_EXT_FEATURE_SPP_AMSDU_SUPPORT                   = C.NL80211_EXT_FEATURE_SPP_AMSDU_SUPPORT
 	NL80211_EXT_FEATURE_STA_TX_PWR                          = C.NL80211_EXT_FEATURE_STA_TX_PWR
 	NL80211_EXT_FEATURE_TXQS                                = C.NL80211_EXT_FEATURE_TXQS
 	NL80211_EXT_FEATURE_UNSOL_BCAST_PROBE_RESP              = C.NL80211_EXT_FEATURE_UNSOL_BCAST_PROBE_RESP
@@ -4805,7 +5398,10 @@ const (
 	NL80211_FREQUENCY_ATTR_2MHZ                             = C.NL80211_FREQUENCY_ATTR_2MHZ
 	NL80211_FREQUENCY_ATTR_4MHZ                             = C.NL80211_FREQUENCY_ATTR_4MHZ
 	NL80211_FREQUENCY_ATTR_8MHZ                             = C.NL80211_FREQUENCY_ATTR_8MHZ
+	NL80211_FREQUENCY_ATTR_ALLOW_6GHZ_VLP_AP                = C.NL80211_FREQUENCY_ATTR_ALLOW_6GHZ_VLP_AP
+	NL80211_FREQUENCY_ATTR_CAN_MONITOR                      = C.NL80211_FREQUENCY_ATTR_CAN_MONITOR
 	NL80211_FREQUENCY_ATTR_DFS_CAC_TIME                     = C.NL80211_FREQUENCY_ATTR_DFS_CAC_TIME
+	NL80211_FREQUENCY_ATTR_DFS_CONCURRENT                   = C.NL80211_FREQUENCY_ATTR_DFS_CONCURRENT
 	NL80211_FREQUENCY_ATTR_DFS_STATE                        = C.NL80211_FREQUENCY_ATTR_DFS_STATE
 	NL80211_FREQUENCY_ATTR_DFS_TIME                         = C.NL80211_FREQUENCY_ATTR_DFS_TIME
 	NL80211_FREQUENCY_ATTR_DISABLED                         = C.NL80211_FREQUENCY_ATTR_DISABLED
@@ -4818,14 +5414,21 @@ const (
 	NL80211_FREQUENCY_ATTR_NO_10MHZ                         = C.NL80211_FREQUENCY_ATTR_NO_10MHZ
 	NL80211_FREQUENCY_ATTR_NO_160MHZ                        = C.NL80211_FREQUENCY_ATTR_NO_160MHZ
 	NL80211_FREQUENCY_ATTR_NO_20MHZ                         = C.NL80211_FREQUENCY_ATTR_NO_20MHZ
+	NL80211_FREQUENCY_ATTR_NO_320MHZ                        = C.NL80211_FREQUENCY_ATTR_NO_320MHZ
+	NL80211_FREQUENCY_ATTR_NO_6GHZ_AFC_CLIENT               = C.NL80211_FREQUENCY_ATTR_NO_6GHZ_AFC_CLIENT
+	NL80211_FREQUENCY_ATTR_NO_6GHZ_VLP_CLIENT               = C.NL80211_FREQUENCY_ATTR_NO_6GHZ_VLP_CLIENT
 	NL80211_FREQUENCY_ATTR_NO_80MHZ                         = C.NL80211_FREQUENCY_ATTR_NO_80MHZ
+	NL80211_FREQUENCY_ATTR_NO_EHT                           = C.NL80211_FREQUENCY_ATTR_NO_EHT
 	NL80211_FREQUENCY_ATTR_NO_HE                            = C.NL80211_FREQUENCY_ATTR_NO_HE
 	NL80211_FREQUENCY_ATTR_NO_HT40_MINUS                    = C.NL80211_FREQUENCY_ATTR_NO_HT40_MINUS
 	NL80211_FREQUENCY_ATTR_NO_HT40_PLUS                     = C.NL80211_FREQUENCY_ATTR_NO_HT40_PLUS
 	NL80211_FREQUENCY_ATTR_NO_IBSS                          = C.NL80211_FREQUENCY_ATTR_NO_IBSS
 	NL80211_FREQUENCY_ATTR_NO_IR                            = C.NL80211_FREQUENCY_ATTR_NO_IR
+	NL80211_FREQUENCY_ATTR_NO_UHB_AFC_CLIENT                = C.NL80211_FREQUENCY_ATTR_NO_UHB_AFC_CLIENT
+	NL80211_FREQUENCY_ATTR_NO_UHB_VLP_CLIENT                = C.NL80211_FREQUENCY_ATTR_NO_UHB_VLP_CLIENT
 	NL80211_FREQUENCY_ATTR_OFFSET                           = C.NL80211_FREQUENCY_ATTR_OFFSET
 	NL80211_FREQUENCY_ATTR_PASSIVE_SCAN                     = C.NL80211_FREQUENCY_ATTR_PASSIVE_SCAN
+	NL80211_FREQUENCY_ATTR_PSD                              = C.NL80211_FREQUENCY_ATTR_PSD
 	NL80211_FREQUENCY_ATTR_RADAR                            = C.NL80211_FREQUENCY_ATTR_RADAR
 	NL80211_FREQUENCY_ATTR_WMM                              = C.NL80211_FREQUENCY_ATTR_WMM
 	NL80211_FTM_RESP_ATTR_CIVICLOC                          = C.NL80211_FTM_RESP_ATTR_CIVICLOC
@@ -4890,6 +5493,7 @@ const (
 	NL80211_IFTYPE_STATION                                  = C.NL80211_IFTYPE_STATION
 	NL80211_IFTYPE_UNSPECIFIED                              = C.NL80211_IFTYPE_UNSPECIFIED
 	NL80211_IFTYPE_WDS                                      = C.NL80211_IFTYPE_WDS
+	NL80211_KCK_EXT_LEN_32                                  = C.NL80211_KCK_EXT_LEN_32
 	NL80211_KCK_EXT_LEN                                     = C.NL80211_KCK_EXT_LEN
 	NL80211_KCK_LEN                                         = C.NL80211_KCK_LEN
 	NL80211_KEK_EXT_LEN                                     = C.NL80211_KEK_EXT_LEN
@@ -4918,6 +5522,13 @@ const (
 	NL80211_MAX_SUPP_HT_RATES                               = C.NL80211_MAX_SUPP_HT_RATES
 	NL80211_MAX_SUPP_RATES                                  = C.NL80211_MAX_SUPP_RATES
 	NL80211_MAX_SUPP_REG_RULES                              = C.NL80211_MAX_SUPP_REG_RULES
+	NL80211_MAX_SUPP_SELECTORS                              = C.NL80211_MAX_SUPP_SELECTORS
+	NL80211_MBSSID_CONFIG_ATTR_EMA                          = C.NL80211_MBSSID_CONFIG_ATTR_EMA
+	NL80211_MBSSID_CONFIG_ATTR_INDEX                        = C.NL80211_MBSSID_CONFIG_ATTR_INDEX
+	NL80211_MBSSID_CONFIG_ATTR_MAX                          = C.NL80211_MBSSID_CONFIG_ATTR_MAX
+	NL80211_MBSSID_CONFIG_ATTR_MAX_EMA_PROFILE_PERIODICITY  = C.NL80211_MBSSID_CONFIG_ATTR_MAX_EMA_PROFILE_PERIODICITY
+	NL80211_MBSSID_CONFIG_ATTR_MAX_INTERFACES               = C.NL80211_MBSSID_CONFIG_ATTR_MAX_INTERFACES
+	NL80211_MBSSID_CONFIG_ATTR_TX_IFINDEX                   = C.NL80211_MBSSID_CONFIG_ATTR_TX_IFINDEX
 	NL80211_MESHCONF_ATTR_MAX                               = C.NL80211_MESHCONF_ATTR_MAX
 	NL80211_MESHCONF_AUTO_OPEN_PLINKS                       = C.NL80211_MESHCONF_AUTO_OPEN_PLINKS
 	NL80211_MESHCONF_AWAKE_WINDOW                           = C.NL80211_MESHCONF_AWAKE_WINDOW
@@ -5080,6 +5691,7 @@ const (
 	NL80211_PMSR_FTM_FAILURE_UNSPECIFIED                    = C.NL80211_PMSR_FTM_FAILURE_UNSPECIFIED
 	NL80211_PMSR_FTM_FAILURE_WRONG_CHANNEL                  = C.NL80211_PMSR_FTM_FAILURE_WRONG_CHANNEL
 	NL80211_PMSR_FTM_REQ_ATTR_ASAP                          = C.NL80211_PMSR_FTM_REQ_ATTR_ASAP
+	NL80211_PMSR_FTM_REQ_ATTR_BSS_COLOR                     = C.NL80211_PMSR_FTM_REQ_ATTR_BSS_COLOR
 	NL80211_PMSR_FTM_REQ_ATTR_BURST_DURATION                = C.NL80211_PMSR_FTM_REQ_ATTR_BURST_DURATION
 	NL80211_PMSR_FTM_REQ_ATTR_BURST_PERIOD                  = C.NL80211_PMSR_FTM_REQ_ATTR_BURST_PERIOD
 	NL80211_PMSR_FTM_REQ_ATTR_FTMS_PER_BURST                = C.NL80211_PMSR_FTM_REQ_ATTR_FTMS_PER_BURST
@@ -5156,12 +5768,41 @@ const (
 	NL80211_RADAR_PRE_CAC_EXPIRED                           = C.NL80211_RADAR_PRE_CAC_EXPIRED
 	NL80211_RATE_INFO_10_MHZ_WIDTH                          = C.NL80211_RATE_INFO_10_MHZ_WIDTH
 	NL80211_RATE_INFO_160_MHZ_WIDTH                         = C.NL80211_RATE_INFO_160_MHZ_WIDTH
+	NL80211_RATE_INFO_16_MHZ_WIDTH                          = C.NL80211_RATE_INFO_16_MHZ_WIDTH
+	NL80211_RATE_INFO_1_MHZ_WIDTH                           = C.NL80211_RATE_INFO_1_MHZ_WIDTH
+	NL80211_RATE_INFO_2_MHZ_WIDTH                           = C.NL80211_RATE_INFO_2_MHZ_WIDTH
+	NL80211_RATE_INFO_320_MHZ_WIDTH                         = C.NL80211_RATE_INFO_320_MHZ_WIDTH
 	NL80211_RATE_INFO_40_MHZ_WIDTH                          = C.NL80211_RATE_INFO_40_MHZ_WIDTH
+	NL80211_RATE_INFO_4_MHZ_WIDTH                           = C.NL80211_RATE_INFO_4_MHZ_WIDTH
 	NL80211_RATE_INFO_5_MHZ_WIDTH                           = C.NL80211_RATE_INFO_5_MHZ_WIDTH
 	NL80211_RATE_INFO_80_MHZ_WIDTH                          = C.NL80211_RATE_INFO_80_MHZ_WIDTH
 	NL80211_RATE_INFO_80P80_MHZ_WIDTH                       = C.NL80211_RATE_INFO_80P80_MHZ_WIDTH
+	NL80211_RATE_INFO_8_MHZ_WIDTH                           = C.NL80211_RATE_INFO_8_MHZ_WIDTH
 	NL80211_RATE_INFO_BITRATE32                             = C.NL80211_RATE_INFO_BITRATE32
 	NL80211_RATE_INFO_BITRATE                               = C.NL80211_RATE_INFO_BITRATE
+	NL80211_RATE_INFO_EHT_GI_0_8                            = C.NL80211_RATE_INFO_EHT_GI_0_8
+	NL80211_RATE_INFO_EHT_GI_1_6                            = C.NL80211_RATE_INFO_EHT_GI_1_6
+	NL80211_RATE_INFO_EHT_GI_3_2                            = C.NL80211_RATE_INFO_EHT_GI_3_2
+	NL80211_RATE_INFO_EHT_GI                                = C.NL80211_RATE_INFO_EHT_GI
+	NL80211_RATE_INFO_EHT_MCS                               = C.NL80211_RATE_INFO_EHT_MCS
+	NL80211_RATE_INFO_EHT_NSS                               = C.NL80211_RATE_INFO_EHT_NSS
+	NL80211_RATE_INFO_EHT_RU_ALLOC_106                      = C.NL80211_RATE_INFO_EHT_RU_ALLOC_106
+	NL80211_RATE_INFO_EHT_RU_ALLOC_106P26                   = C.NL80211_RATE_INFO_EHT_RU_ALLOC_106P26
+	NL80211_RATE_INFO_EHT_RU_ALLOC_242                      = C.NL80211_RATE_INFO_EHT_RU_ALLOC_242
+	NL80211_RATE_INFO_EHT_RU_ALLOC_26                       = C.NL80211_RATE_INFO_EHT_RU_ALLOC_26
+	NL80211_RATE_INFO_EHT_RU_ALLOC_2x996                    = C.NL80211_RATE_INFO_EHT_RU_ALLOC_2x996
+	NL80211_RATE_INFO_EHT_RU_ALLOC_2x996P484                = C.NL80211_RATE_INFO_EHT_RU_ALLOC_2x996P484
+	NL80211_RATE_INFO_EHT_RU_ALLOC_3x996                    = C.NL80211_RATE_INFO_EHT_RU_ALLOC_3x996
+	NL80211_RATE_INFO_EHT_RU_ALLOC_3x996P484                = C.NL80211_RATE_INFO_EHT_RU_ALLOC_3x996P484
+	NL80211_RATE_INFO_EHT_RU_ALLOC_484                      = C.NL80211_RATE_INFO_EHT_RU_ALLOC_484
+	NL80211_RATE_INFO_EHT_RU_ALLOC_484P242                  = C.NL80211_RATE_INFO_EHT_RU_ALLOC_484P242
+	NL80211_RATE_INFO_EHT_RU_ALLOC_4x996                    = C.NL80211_RATE_INFO_EHT_RU_ALLOC_4x996
+	NL80211_RATE_INFO_EHT_RU_ALLOC_52                       = C.NL80211_RATE_INFO_EHT_RU_ALLOC_52
+	NL80211_RATE_INFO_EHT_RU_ALLOC_52P26                    = C.NL80211_RATE_INFO_EHT_RU_ALLOC_52P26
+	NL80211_RATE_INFO_EHT_RU_ALLOC_996                      = C.NL80211_RATE_INFO_EHT_RU_ALLOC_996
+	NL80211_RATE_INFO_EHT_RU_ALLOC_996P484                  = C.NL80211_RATE_INFO_EHT_RU_ALLOC_996P484
+	NL80211_RATE_INFO_EHT_RU_ALLOC_996P484P242              = C.NL80211_RATE_INFO_EHT_RU_ALLOC_996P484P242
+	NL80211_RATE_INFO_EHT_RU_ALLOC                          = C.NL80211_RATE_INFO_EHT_RU_ALLOC
 	NL80211_RATE_INFO_HE_1XLTF                              = C.NL80211_RATE_INFO_HE_1XLTF
 	NL80211_RATE_INFO_HE_2XLTF                              = C.NL80211_RATE_INFO_HE_2XLTF
 	NL80211_RATE_INFO_HE_4XLTF                              = C.NL80211_RATE_INFO_HE_4XLTF
@@ -5182,6 +5823,8 @@ const (
 	NL80211_RATE_INFO_HE_RU_ALLOC                           = C.NL80211_RATE_INFO_HE_RU_ALLOC
 	NL80211_RATE_INFO_MAX                                   = C.NL80211_RATE_INFO_MAX
 	NL80211_RATE_INFO_MCS                                   = C.NL80211_RATE_INFO_MCS
+	NL80211_RATE_INFO_S1G_MCS                               = C.NL80211_RATE_INFO_S1G_MCS
+	NL80211_RATE_INFO_S1G_NSS                               = C.NL80211_RATE_INFO_S1G_NSS
 	NL80211_RATE_INFO_SHORT_GI                              = C.NL80211_RATE_INFO_SHORT_GI
 	NL80211_RATE_INFO_VHT_MCS                               = C.NL80211_RATE_INFO_VHT_MCS
 	NL80211_RATE_INFO_VHT_NSS                               = C.NL80211_RATE_INFO_VHT_NSS
@@ -5199,13 +5842,19 @@ const (
 	NL80211_REKEY_DATA_KEK                                  = C.NL80211_REKEY_DATA_KEK
 	NL80211_REKEY_DATA_REPLAY_CTR                           = C.NL80211_REKEY_DATA_REPLAY_CTR
 	NL80211_REPLAY_CTR_LEN                                  = C.NL80211_REPLAY_CTR_LEN
+	NL80211_RRF_ALLOW_6GHZ_VLP_AP                           = C.NL80211_RRF_ALLOW_6GHZ_VLP_AP
 	NL80211_RRF_AUTO_BW                                     = C.NL80211_RRF_AUTO_BW
 	NL80211_RRF_DFS                                         = C.NL80211_RRF_DFS
+	NL80211_RRF_DFS_CONCURRENT                              = C.NL80211_RRF_DFS_CONCURRENT
 	NL80211_RRF_GO_CONCURRENT                               = C.NL80211_RRF_GO_CONCURRENT
 	NL80211_RRF_IR_CONCURRENT                               = C.NL80211_RRF_IR_CONCURRENT
 	NL80211_RRF_NO_160MHZ                                   = C.NL80211_RRF_NO_160MHZ
+	NL80211_RRF_NO_320MHZ                                   = C.NL80211_RRF_NO_320MHZ
+	NL80211_RRF_NO_6GHZ_AFC_CLIENT                          = C.NL80211_RRF_NO_6GHZ_AFC_CLIENT
+	NL80211_RRF_NO_6GHZ_VLP_CLIENT                          = C.NL80211_RRF_NO_6GHZ_VLP_CLIENT
 	NL80211_RRF_NO_80MHZ                                    = C.NL80211_RRF_NO_80MHZ
 	NL80211_RRF_NO_CCK                                      = C.NL80211_RRF_NO_CCK
+	NL80211_RRF_NO_EHT                                      = C.NL80211_RRF_NO_EHT
 	NL80211_RRF_NO_HE                                       = C.NL80211_RRF_NO_HE
 	NL80211_RRF_NO_HT40                                     = C.NL80211_RRF_NO_HT40
 	NL80211_RRF_NO_HT40MINUS                                = C.NL80211_RRF_NO_HT40MINUS
@@ -5216,7 +5865,10 @@ const (
 	NL80211_RRF_NO_IR                                       = C.NL80211_RRF_NO_IR
 	NL80211_RRF_NO_OFDM                                     = C.NL80211_RRF_NO_OFDM
 	NL80211_RRF_NO_OUTDOOR                                  = C.NL80211_RRF_NO_OUTDOOR
+	NL80211_RRF_NO_UHB_AFC_CLIENT                           = C.NL80211_RRF_NO_UHB_AFC_CLIENT
+	NL80211_RRF_NO_UHB_VLP_CLIENT                           = C.NL80211_RRF_NO_UHB_VLP_CLIENT
 	NL80211_RRF_PASSIVE_SCAN                                = C.NL80211_RRF_PASSIVE_SCAN
+	NL80211_RRF_PSD                                         = C.NL80211_RRF_PSD
 	NL80211_RRF_PTMP_ONLY                                   = C.NL80211_RRF_PTMP_ONLY
 	NL80211_RRF_PTP_ONLY                                    = C.NL80211_RRF_PTP_ONLY
 	NL80211_RXMGMT_FLAG_ANSWERED                            = C.NL80211_RXMGMT_FLAG_ANSWERED
@@ -5277,6 +5929,7 @@ const (
 	NL80211_STA_FLAG_MAX_OLD_API                            = C.NL80211_STA_FLAG_MAX_OLD_API
 	NL80211_STA_FLAG_MFP                                    = C.NL80211_STA_FLAG_MFP
 	NL80211_STA_FLAG_SHORT_PREAMBLE                         = C.NL80211_STA_FLAG_SHORT_PREAMBLE
+	NL80211_STA_FLAG_SPP_AMSDU                              = C.NL80211_STA_FLAG_SPP_AMSDU
 	NL80211_STA_FLAG_TDLS_PEER                              = C.NL80211_STA_FLAG_TDLS_PEER
 	NL80211_STA_FLAG_WME                                    = C.NL80211_STA_FLAG_WME
 	NL80211_STA_INFO_ACK_SIGNAL_AVG                         = C.NL80211_STA_INFO_ACK_SIGNAL_AVG
@@ -5435,6 +6088,13 @@ const (
 	NL80211_VHT_CAPABILITY_LEN                              = C.NL80211_VHT_CAPABILITY_LEN
 	NL80211_VHT_NSS_MAX                                     = C.NL80211_VHT_NSS_MAX
 	NL80211_WIPHY_NAME_MAXLEN                               = C.NL80211_WIPHY_NAME_MAXLEN
+	NL80211_WIPHY_RADIO_ATTR_FREQ_RANGE                     = C.NL80211_WIPHY_RADIO_ATTR_FREQ_RANGE
+	NL80211_WIPHY_RADIO_ATTR_INDEX                          = C.NL80211_WIPHY_RADIO_ATTR_INDEX
+	NL80211_WIPHY_RADIO_ATTR_INTERFACE_COMBINATION          = C.NL80211_WIPHY_RADIO_ATTR_INTERFACE_COMBINATION
+	NL80211_WIPHY_RADIO_ATTR_MAX                            = C.NL80211_WIPHY_RADIO_ATTR_MAX
+	NL80211_WIPHY_RADIO_FREQ_ATTR_END                       = C.NL80211_WIPHY_RADIO_FREQ_ATTR_END
+	NL80211_WIPHY_RADIO_FREQ_ATTR_MAX                       = C.NL80211_WIPHY_RADIO_FREQ_ATTR_MAX
+	NL80211_WIPHY_RADIO_FREQ_ATTR_START                     = C.NL80211_WIPHY_RADIO_FREQ_ATTR_START
 	NL80211_WMMR_AIFSN                                      = C.NL80211_WMMR_AIFSN
 	NL80211_WMMR_CW_MAX                                     = C.NL80211_WMMR_CW_MAX
 	NL80211_WMMR_CW_MIN                                     = C.NL80211_WMMR_CW_MIN
@@ -5466,6 +6126,7 @@ const (
 	NL80211_WOWLAN_TRIG_PKT_PATTERN                         = C.NL80211_WOWLAN_TRIG_PKT_PATTERN
 	NL80211_WOWLAN_TRIG_RFKILL_RELEASE                      = C.NL80211_WOWLAN_TRIG_RFKILL_RELEASE
 	NL80211_WOWLAN_TRIG_TCP_CONNECTION                      = C.NL80211_WOWLAN_TRIG_TCP_CONNECTION
+	NL80211_WOWLAN_TRIG_UNPROTECTED_DEAUTH_DISASSOC         = C.NL80211_WOWLAN_TRIG_UNPROTECTED_DEAUTH_DISASSOC
 	NL80211_WOWLAN_TRIG_WAKEUP_PKT_80211                    = C.NL80211_WOWLAN_TRIG_WAKEUP_PKT_80211
 	NL80211_WOWLAN_TRIG_WAKEUP_PKT_80211_LEN                = C.NL80211_WOWLAN_TRIG_WAKEUP_PKT_80211_LEN
 	NL80211_WOWLAN_TRIG_WAKEUP_PKT_8023                     = C.NL80211_WOWLAN_TRIG_WAKEUP_PKT_8023
@@ -5523,3 +6184,212 @@ const (
 	AUDIT_NLGRP_NONE    = C.AUDIT_NLGRP_NONE
 	AUDIT_NLGRP_READLOG = C.AUDIT_NLGRP_READLOG
 )
+
+// generated by:
+// perl -nlE '/^#define (TUN_F_\w+)/ && say "$1 = C.$1"' include/uapi/linux/if_tun.h
+const (
+	TUN_F_CSUM    = C.TUN_F_CSUM
+	TUN_F_TSO4    = C.TUN_F_TSO4
+	TUN_F_TSO6    = C.TUN_F_TSO6
+	TUN_F_TSO_ECN = C.TUN_F_TSO_ECN
+	TUN_F_UFO     = C.TUN_F_UFO
+	TUN_F_USO4    = C.TUN_F_USO4
+	TUN_F_USO6    = C.TUN_F_USO6
+)
+
+// generated by:
+// perl -nlE '/^#define (VIRTIO_NET_HDR_F_\w+)/ && say "$1 = C.$1"' include/uapi/linux/virtio_net.h
+const (
+	VIRTIO_NET_HDR_F_NEEDS_CSUM = C.VIRTIO_NET_HDR_F_NEEDS_CSUM
+	VIRTIO_NET_HDR_F_DATA_VALID = C.VIRTIO_NET_HDR_F_DATA_VALID
+	VIRTIO_NET_HDR_F_RSC_INFO   = C.VIRTIO_NET_HDR_F_RSC_INFO
+)
+
+// generated by:
+// perl -nlE '/^#define (VIRTIO_NET_HDR_GSO_\w+)/ && say "$1 = C.$1"' include/uapi/linux/virtio_net.h
+const (
+	VIRTIO_NET_HDR_GSO_NONE   = C.VIRTIO_NET_HDR_GSO_NONE
+	VIRTIO_NET_HDR_GSO_TCPV4  = C.VIRTIO_NET_HDR_GSO_TCPV4
+	VIRTIO_NET_HDR_GSO_UDP    = C.VIRTIO_NET_HDR_GSO_UDP
+	VIRTIO_NET_HDR_GSO_TCPV6  = C.VIRTIO_NET_HDR_GSO_TCPV6
+	VIRTIO_NET_HDR_GSO_UDP_L4 = C.VIRTIO_NET_HDR_GSO_UDP_L4
+	VIRTIO_NET_HDR_GSO_ECN    = C.VIRTIO_NET_HDR_GSO_ECN
+)
+
+type RISCVHWProbePairs C.struct_riscv_hwprobe
+
+// Filtered out for non RISC-V architectures in mkpost.go
+// generated by:
+// perl -nlE '/^#define\s+(RISCV_HWPROBE_\w+)/ && say "$1 = C.$1"' /tmp/riscv64/include/asm/hwprobe.h
+const (
+	RISCV_HWPROBE_KEY_MVENDORID          = C.RISCV_HWPROBE_KEY_MVENDORID
+	RISCV_HWPROBE_KEY_MARCHID            = C.RISCV_HWPROBE_KEY_MARCHID
+	RISCV_HWPROBE_KEY_MIMPID             = C.RISCV_HWPROBE_KEY_MIMPID
+	RISCV_HWPROBE_KEY_BASE_BEHAVIOR      = C.RISCV_HWPROBE_KEY_BASE_BEHAVIOR
+	RISCV_HWPROBE_BASE_BEHAVIOR_IMA      = C.RISCV_HWPROBE_BASE_BEHAVIOR_IMA
+	RISCV_HWPROBE_KEY_IMA_EXT_0          = C.RISCV_HWPROBE_KEY_IMA_EXT_0
+	RISCV_HWPROBE_IMA_FD                 = C.RISCV_HWPROBE_IMA_FD
+	RISCV_HWPROBE_IMA_C                  = C.RISCV_HWPROBE_IMA_C
+	RISCV_HWPROBE_IMA_V                  = C.RISCV_HWPROBE_IMA_V
+	RISCV_HWPROBE_EXT_ZBA                = C.RISCV_HWPROBE_EXT_ZBA
+	RISCV_HWPROBE_EXT_ZBB                = C.RISCV_HWPROBE_EXT_ZBB
+	RISCV_HWPROBE_EXT_ZBS                = C.RISCV_HWPROBE_EXT_ZBS
+	RISCV_HWPROBE_EXT_ZICBOZ             = C.RISCV_HWPROBE_EXT_ZICBOZ
+	RISCV_HWPROBE_EXT_ZBC                = C.RISCV_HWPROBE_EXT_ZBC
+	RISCV_HWPROBE_EXT_ZBKB               = C.RISCV_HWPROBE_EXT_ZBKB
+	RISCV_HWPROBE_EXT_ZBKC               = C.RISCV_HWPROBE_EXT_ZBKC
+	RISCV_HWPROBE_EXT_ZBKX               = C.RISCV_HWPROBE_EXT_ZBKX
+	RISCV_HWPROBE_EXT_ZKND               = C.RISCV_HWPROBE_EXT_ZKND
+	RISCV_HWPROBE_EXT_ZKNE               = C.RISCV_HWPROBE_EXT_ZKNE
+	RISCV_HWPROBE_EXT_ZKNH               = C.RISCV_HWPROBE_EXT_ZKNH
+	RISCV_HWPROBE_EXT_ZKSED              = C.RISCV_HWPROBE_EXT_ZKSED
+	RISCV_HWPROBE_EXT_ZKSH               = C.RISCV_HWPROBE_EXT_ZKSH
+	RISCV_HWPROBE_EXT_ZKT                = C.RISCV_HWPROBE_EXT_ZKT
+	RISCV_HWPROBE_EXT_ZVBB               = C.RISCV_HWPROBE_EXT_ZVBB
+	RISCV_HWPROBE_EXT_ZVBC               = C.RISCV_HWPROBE_EXT_ZVBC
+	RISCV_HWPROBE_EXT_ZVKB               = C.RISCV_HWPROBE_EXT_ZVKB
+	RISCV_HWPROBE_EXT_ZVKG               = C.RISCV_HWPROBE_EXT_ZVKG
+	RISCV_HWPROBE_EXT_ZVKNED             = C.RISCV_HWPROBE_EXT_ZVKNED
+	RISCV_HWPROBE_EXT_ZVKNHA             = C.RISCV_HWPROBE_EXT_ZVKNHA
+	RISCV_HWPROBE_EXT_ZVKNHB             = C.RISCV_HWPROBE_EXT_ZVKNHB
+	RISCV_HWPROBE_EXT_ZVKSED             = C.RISCV_HWPROBE_EXT_ZVKSED
+	RISCV_HWPROBE_EXT_ZVKSH              = C.RISCV_HWPROBE_EXT_ZVKSH
+	RISCV_HWPROBE_EXT_ZVKT               = C.RISCV_HWPROBE_EXT_ZVKT
+	RISCV_HWPROBE_EXT_ZFH                = C.RISCV_HWPROBE_EXT_ZFH
+	RISCV_HWPROBE_EXT_ZFHMIN             = C.RISCV_HWPROBE_EXT_ZFHMIN
+	RISCV_HWPROBE_EXT_ZIHINTNTL          = C.RISCV_HWPROBE_EXT_ZIHINTNTL
+	RISCV_HWPROBE_EXT_ZVFH               = C.RISCV_HWPROBE_EXT_ZVFH
+	RISCV_HWPROBE_EXT_ZVFHMIN            = C.RISCV_HWPROBE_EXT_ZVFHMIN
+	RISCV_HWPROBE_EXT_ZFA                = C.RISCV_HWPROBE_EXT_ZFA
+	RISCV_HWPROBE_EXT_ZTSO               = C.RISCV_HWPROBE_EXT_ZTSO
+	RISCV_HWPROBE_EXT_ZACAS              = C.RISCV_HWPROBE_EXT_ZACAS
+	RISCV_HWPROBE_EXT_ZICOND             = C.RISCV_HWPROBE_EXT_ZICOND
+	RISCV_HWPROBE_EXT_ZIHINTPAUSE        = C.RISCV_HWPROBE_EXT_ZIHINTPAUSE
+	RISCV_HWPROBE_KEY_CPUPERF_0          = C.RISCV_HWPROBE_KEY_CPUPERF_0
+	RISCV_HWPROBE_MISALIGNED_UNKNOWN     = C.RISCV_HWPROBE_MISALIGNED_UNKNOWN
+	RISCV_HWPROBE_MISALIGNED_EMULATED    = C.RISCV_HWPROBE_MISALIGNED_EMULATED
+	RISCV_HWPROBE_MISALIGNED_SLOW        = C.RISCV_HWPROBE_MISALIGNED_SLOW
+	RISCV_HWPROBE_MISALIGNED_FAST        = C.RISCV_HWPROBE_MISALIGNED_FAST
+	RISCV_HWPROBE_MISALIGNED_UNSUPPORTED = C.RISCV_HWPROBE_MISALIGNED_UNSUPPORTED
+	RISCV_HWPROBE_MISALIGNED_MASK        = C.RISCV_HWPROBE_MISALIGNED_MASK
+	RISCV_HWPROBE_KEY_ZICBOZ_BLOCK_SIZE  = C.RISCV_HWPROBE_KEY_ZICBOZ_BLOCK_SIZE
+	RISCV_HWPROBE_WHICH_CPUS             = C.RISCV_HWPROBE_WHICH_CPUS
+)
+
+type SchedAttr C.struct_sched_attr
+
+const SizeofSchedAttr = C.sizeof_struct_sched_attr
+
+type Cachestat_t C.struct_cachestat
+type CachestatRange C.struct_cachestat_range
+
+// generated by:
+// $ perl -nlE '/^\s*((SK_|SKNLGRP_)\w+)/ && say "$1 = C.$1"' /usr/include/linux/sock_diag.h
+const (
+	SK_MEMINFO_RMEM_ALLOC          = C.SK_MEMINFO_RMEM_ALLOC
+	SK_MEMINFO_RCVBUF              = C.SK_MEMINFO_RCVBUF
+	SK_MEMINFO_WMEM_ALLOC          = C.SK_MEMINFO_WMEM_ALLOC
+	SK_MEMINFO_SNDBUF              = C.SK_MEMINFO_SNDBUF
+	SK_MEMINFO_FWD_ALLOC           = C.SK_MEMINFO_FWD_ALLOC
+	SK_MEMINFO_WMEM_QUEUED         = C.SK_MEMINFO_WMEM_QUEUED
+	SK_MEMINFO_OPTMEM              = C.SK_MEMINFO_OPTMEM
+	SK_MEMINFO_BACKLOG             = C.SK_MEMINFO_BACKLOG
+	SK_MEMINFO_DROPS               = C.SK_MEMINFO_DROPS
+	SK_MEMINFO_VARS                = C.SK_MEMINFO_VARS
+	SKNLGRP_NONE                   = C.SKNLGRP_NONE
+	SKNLGRP_INET_TCP_DESTROY       = C.SKNLGRP_INET_TCP_DESTROY
+	SKNLGRP_INET_UDP_DESTROY       = C.SKNLGRP_INET_UDP_DESTROY
+	SKNLGRP_INET6_TCP_DESTROY      = C.SKNLGRP_INET6_TCP_DESTROY
+	SKNLGRP_INET6_UDP_DESTROY      = C.SKNLGRP_INET6_UDP_DESTROY
+	SK_DIAG_BPF_STORAGE_REQ_NONE   = C.SK_DIAG_BPF_STORAGE_REQ_NONE
+	SK_DIAG_BPF_STORAGE_REQ_MAP_FD = C.SK_DIAG_BPF_STORAGE_REQ_MAP_FD
+	SK_DIAG_BPF_STORAGE_REP_NONE   = C.SK_DIAG_BPF_STORAGE_REP_NONE
+	SK_DIAG_BPF_STORAGE            = C.SK_DIAG_BPF_STORAGE
+	SK_DIAG_BPF_STORAGE_NONE       = C.SK_DIAG_BPF_STORAGE_NONE
+	SK_DIAG_BPF_STORAGE_PAD        = C.SK_DIAG_BPF_STORAGE_PAD
+	SK_DIAG_BPF_STORAGE_MAP_ID     = C.SK_DIAG_BPF_STORAGE_MAP_ID
+	SK_DIAG_BPF_STORAGE_MAP_VALUE  = C.SK_DIAG_BPF_STORAGE_MAP_VALUE
+)
+
+type SockDiagReq C.struct_sock_diag_req
+
+// Removed in Linux 6.13, kept for backwards compatibility.
+const RTM_NEWNVLAN = 0x70
+
+// Memory policy modes and flags for [SetMemPolicy], as defined in /usr/include/linux/mempolicy.h.
+// Not all can be used, see set_mempolicy(2).
+// Generated by:
+// $ { perl -nlE '/^#define (MPOL_\w+)/ && say "\t$1 = C.$1"' /usr/include/linux/mempolicy.h; perl -nlE '/^\s*(MPOL_\w+)/ && say "\t$1 = C.$1"' /usr/include/linux/mempolicy.h; } | sort | uniq
+const (
+	MPOL_BIND                = C.MPOL_BIND
+	MPOL_DEFAULT             = C.MPOL_DEFAULT
+	MPOL_F_ADDR              = C.MPOL_F_ADDR
+	MPOL_F_MEMS_ALLOWED      = C.MPOL_F_MEMS_ALLOWED
+	MPOL_F_MOF               = C.MPOL_F_MOF
+	MPOL_F_MORON             = C.MPOL_F_MORON
+	MPOL_F_NODE              = C.MPOL_F_NODE
+	MPOL_F_NUMA_BALANCING    = C.MPOL_F_NUMA_BALANCING
+	MPOL_F_RELATIVE_NODES    = C.MPOL_F_RELATIVE_NODES
+	MPOL_F_SHARED            = C.MPOL_F_SHARED
+	MPOL_F_STATIC_NODES      = C.MPOL_F_STATIC_NODES
+	MPOL_INTERLEAVE          = C.MPOL_INTERLEAVE
+	MPOL_LOCAL               = C.MPOL_LOCAL
+	MPOL_MAX                 = C.MPOL_MAX
+	MPOL_MF_INTERNAL         = C.MPOL_MF_INTERNAL
+	MPOL_MF_LAZY             = C.MPOL_MF_LAZY
+	MPOL_MF_MOVE_ALL         = C.MPOL_MF_MOVE_ALL
+	MPOL_MF_MOVE             = C.MPOL_MF_MOVE
+	MPOL_MF_STRICT           = C.MPOL_MF_STRICT
+	MPOL_MF_VALID            = C.MPOL_MF_VALID
+	MPOL_MODE_FLAGS          = C.MPOL_MODE_FLAGS
+	MPOL_PREFERRED           = C.MPOL_PREFERRED
+	MPOL_PREFERRED_MANY      = C.MPOL_PREFERRED_MANY
+	MPOL_WEIGHTED_INTERLEAVE = C.MPOL_WEIGHTED_INTERLEAVE
+)
+
+// GPIO API
+const (
+	GPIO_GET_CHIPINFO_IOCTL          = C.GPIO_GET_CHIPINFO_IOCTL
+	GPIO_V2_GET_LINEINFO_IOCTL       = C.GPIO_V2_GET_LINEINFO_IOCTL
+	GPIO_V2_GET_LINE_IOCTL           = C.GPIO_V2_GET_LINE_IOCTL
+	GPIO_V2_LINE_GET_VALUES_IOCTL    = C.GPIO_V2_LINE_GET_VALUES_IOCTL
+	GPIO_V2_LINE_SET_VALUES_IOCTL    = C.GPIO_V2_LINE_SET_VALUES_IOCTL
+	GPIO_V2_GET_LINEINFO_WATCH_IOCTL = C.GPIO_V2_GET_LINEINFO_WATCH_IOCTL
+	GPIO_GET_LINEINFO_UNWATCH_IOCTL  = C.GPIO_GET_LINEINFO_UNWATCH_IOCTL
+)
+const (
+	GPIO_V2_LINE_ATTR_ID_FLAGS         = C.GPIO_V2_LINE_ATTR_ID_FLAGS
+	GPIO_V2_LINE_ATTR_ID_OUTPUT_VALUES = C.GPIO_V2_LINE_ATTR_ID_OUTPUT_VALUES
+	GPIO_V2_LINE_ATTR_ID_DEBOUNCE      = C.GPIO_V2_LINE_ATTR_ID_DEBOUNCE
+	GPIO_V2_LINE_CHANGED_REQUESTED     = C.GPIO_V2_LINE_CHANGED_REQUESTED
+	GPIO_V2_LINE_CHANGED_RELEASED      = C.GPIO_V2_LINE_CHANGED_RELEASED
+	GPIO_V2_LINE_CHANGED_CONFIG        = C.GPIO_V2_LINE_CHANGED_CONFIG
+	GPIO_V2_LINE_EVENT_RISING_EDGE     = C.GPIO_V2_LINE_EVENT_RISING_EDGE
+	GPIO_V2_LINE_EVENT_FALLING_EDGE    = C.GPIO_V2_LINE_EVENT_FALLING_EDGE
+)
+
+type GPIOChipInfo C.struct_gpiochip_info
+type GPIOV2LineValues C.struct_gpio_v2_line_values
+type GPIOV2LineAttribute C.struct_gpio_v2_line_attribute
+type GPIOV2LineConfigAttribute C.struct_gpio_v2_line_config_attribute
+type GPIOV2LineConfig C.struct_gpio_v2_line_config
+type GPIOV2LineRequest C.struct_gpio_v2_line_request
+type GPIOV2LineInfo C.struct_gpio_v2_line_info
+type GPIOV2LineInfoChanged C.struct_gpio_v2_line_info_changed
+type GPIOV2LineEvent C.struct_gpio_v2_line_event
+
+// IPMI SI
+const (
+	IPMI_MAX_ADDR_SIZE              = C.IPMI_MAX_ADDR_SIZE
+	IPMI_SYSTEM_INTERFACE_ADDR_TYPE = C.IPMI_SYSTEM_INTERFACE_ADDR_TYPE
+	IPMI_BMC_CHANNEL                = C.IPMI_BMC_CHANNEL
+	IPMI_RESPONSE_RECV_TYPE         = C.IPMI_RESPONSE_RECV_TYPE
+
+	IPMICTL_SEND_COMMAND = C.IPMICTL_SEND_COMMAND
+	IPMICTL_RECEIVE_MSG  = C.IPMICTL_RECEIVE_MSG
+)
+
+type IPMISystemInterfaceAddr C.struct_ipmi_system_interface_addr
+type IPMIMsg C.struct_ipmi_msg
+type IPMIReq C.struct_ipmi_req
+type IPMIRecv C.struct_ipmi_recv

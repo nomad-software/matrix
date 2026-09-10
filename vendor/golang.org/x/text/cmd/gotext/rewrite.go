@@ -5,6 +5,7 @@
 package main
 
 import (
+	"io"
 	"os"
 
 	"golang.org/x/text/message/pipeline"
@@ -18,15 +19,8 @@ const printerType = "golang.org/x/text/message.Printer"
 // - handle features (gender, plural)
 // - message rewriting
 
-func init() {
-	overwrite = cmdRewrite.Flag.Bool("w", false, "write files in place")
-}
-
-var (
-	overwrite *bool
-)
-
 var cmdRewrite = &Command{
+	Init:      initRewrite,
 	Run:       runRewrite,
 	UsageLine: "rewrite <package>",
 	Short:     "rewrites fmt functions to use a message Printer",
@@ -38,10 +32,14 @@ using Printf to allow translators to reorder arguments.
 `,
 }
 
-func runRewrite(cmd *Command, args []string) error {
-	w := os.Stdout
-	if *overwrite {
-		w = nil
+func initRewrite(cmd *Command) {
+	overwrite = cmd.Flag.Bool("w", false, "write files in place")
+}
+
+func runRewrite(cmd *Command, _ *pipeline.Config, args []string) error {
+	var w io.Writer
+	if !*overwrite {
+		w = os.Stdout
 	}
 	pkg := "."
 	switch len(args) {

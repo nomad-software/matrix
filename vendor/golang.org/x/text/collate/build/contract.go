@@ -18,7 +18,7 @@ import (
 // the necessary tables.
 // Any Unicode Collation Algorithm (UCA) table entry that has more than
 // one rune one the left-hand side is called a contraction.
-// See http://www.unicode.org/reports/tr10/#Contractions for more details.
+// See https://www.unicode.org/reports/tr10/#Contractions for more details.
 //
 // We define the following terms:
 //   initial:     a rune that appears as the first rune in a contraction.
@@ -56,19 +56,22 @@ const (
 // entry might still resemble a completed suffix.
 // Examples:
 // The suffix strings "ab" and "ac" can be represented as:
-// []ctEntry{
-//     {'a', 1, 1, noIndex},  // 'a' by itself does not match, so i is 0xFF.
-//     {'b', 'c', 0, 1},   // "ab" -> 1, "ac" -> 2
-// }
+//
+//	[]ctEntry{
+//		{'a', 1, 1, noIndex},  // 'a' by itself does not match, so i is 0xFF.
+//		{'b', 'c', 0, 1},   // "ab" -> 1, "ac" -> 2
+//	}
 //
 // The suffix strings "ab", "abc", "abd", and "abcd" can be represented as:
-// []ctEntry{
-//     {'a', 1, 1, noIndex}, // 'a' must be followed by 'b'.
-//     {'b', 1, 2, 1},    // "ab" -> 1, may be followed by 'c' or 'd'.
-//     {'d', 'd', final, 3},  // "abd" -> 3
-//     {'c', 4, 1, 2},    // "abc" -> 2, may be followed by 'd'.
-//     {'d', 'd', final, 4},  // "abcd" -> 4
-// }
+//
+//	[]ctEntry{
+//		{'a', 1, 1, noIndex}, // 'a' must be followed by 'b'.
+//		{'b', 1, 2, 1},    // "ab" -> 1, may be followed by 'c' or 'd'.
+//		{'d', 'd', final, 3},  // "abd" -> 3
+//		{'c', 4, 1, 2},    // "abc" -> 2, may be followed by 'd'.
+//		{'d', 'd', final, 4},  // "abcd" -> 4
+//	}
+//
 // See genStateTests in contract_test.go for more examples.
 type ctEntry struct {
 	L uint8 // non-final: byte value to match; final: lowest match in range.
@@ -279,7 +282,7 @@ func print(t *colltab.ContractTrieSet, w io.Writer, name string) (n, size int, e
 
 	update3(printArray(*t, w, name))
 	update2(fmt.Fprintf(w, "var %sContractTrieSet = ", name))
-	update3(printStruct(*t, w, name))
+	update3(printStruct(w, name))
 	update2(fmt.Fprintln(w))
 	return
 }
@@ -302,8 +305,8 @@ func printArray(ct colltab.ContractTrieSet, w io.Writer, name string) (n, size i
 	return
 }
 
-func printStruct(ct colltab.ContractTrieSet, w io.Writer, name string) (n, size int, err error) {
+func printStruct(w io.Writer, name string) (n, size int, err error) {
 	n, err = fmt.Fprintf(w, "colltab.ContractTrieSet( %sCTEntries[:] )", name)
-	size = int(reflect.TypeOf(ct).Size())
+	size = int(reflect.TypeFor[colltab.ContractTrieSet]().Size())
 	return
 }

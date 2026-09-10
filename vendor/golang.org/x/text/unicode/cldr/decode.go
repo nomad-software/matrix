@@ -10,7 +10,6 @@ import (
 	"encoding/xml"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"os"
 	"path/filepath"
@@ -33,7 +32,7 @@ func (d *Decoder) SetSectionFilter(filter ...string) {
 	// TODO: automatically set dir filter
 }
 
-// SetDirFilter limits the loading of LDML XML files of the specied directories.
+// SetDirFilter limits the loading of LDML XML files of the specified directories.
 // Note that sections may be split across directories differently for different CLDR versions.
 // For more robust code, use SetSectionFilter.
 func (d *Decoder) SetDirFilter(dir ...string) {
@@ -58,9 +57,10 @@ func (d *Decoder) Decode(l Loader) (cldr *CLDR, err error) {
 			if len(d.dirFilter) > 0 && !in(d.dirFilter, m[1]) {
 				continue
 			}
-			var r io.Reader
+			var r io.ReadCloser
 			if r, err = l.Reader(i); err == nil {
 				err = d.decode(m[1], m[2], r)
+				r.Close()
 			}
 			if err != nil {
 				return nil, err
@@ -100,7 +100,7 @@ func (d *Decoder) decode(dir, id string, r io.Reader) error {
 		if l.Identity == nil {
 			return fmt.Errorf("%s/%s: missing identity element", dir, id)
 		}
-		// TODO: verify when CLDR bug http://unicode.org/cldr/trac/ticket/8970
+		// TODO: verify when CLDR bug https://unicode.org/cldr/trac/ticket/8970
 		// is resolved.
 		// path := strings.Split(id, "_")
 		// if lang := l.Identity.Language.Type; lang != path[0] {
@@ -159,7 +159,7 @@ func (zl zipLoader) Reader(i int) (io.ReadCloser, error) {
 
 // DecodeZip loads CLDR data from the zip archive for which r is the source.
 func (d *Decoder) DecodeZip(r io.Reader) (cldr *CLDR, err error) {
-	buffer, err := ioutil.ReadAll(r)
+	buffer, err := io.ReadAll(r)
 	if err != nil {
 		return nil, err
 	}

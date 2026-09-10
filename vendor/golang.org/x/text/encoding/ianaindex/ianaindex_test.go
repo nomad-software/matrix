@@ -49,9 +49,9 @@ func TestNotSupported(t *testing.T) {
 		}
 	}
 
-	// Many encodings in the IANA index will likely not be suppored by the
+	// Many encodings in the IANA index will likely not be supported by the
 	// Go encodings. That is fine.
-	// TODO: consider wheter we should add this test.
+	// TODO: consider whether we should add this test.
 	// for code, mib := range ianaToMIB {
 	// 	t.Run(fmt.Sprint("IANA:", mib), func(t *testing.T) {
 	// 		if !mibs[mib] {
@@ -74,6 +74,7 @@ func TestEncoding(t *testing.T) {
 		{MIME, "  l5  ", "ISO-8859-9", nil},
 		{MIME, "latin5 ", "ISO-8859-9", nil},
 		{MIME, "LATIN5 ", "ISO-8859-9", nil},
+		{MIME, "us-ascii", "US-ASCII", nil},
 		{MIME, "latin 5", "", errInvalidName},
 		{MIME, "latin-5", "", errInvalidName},
 

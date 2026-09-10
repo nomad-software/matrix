@@ -1,6 +1,5 @@
-// +build !windows
-// +build !js
-// +build !appengine
+//go:build !windows && !js && !appengine
+// +build !windows,!js,!appengine
 
 package runewidth
 
@@ -8,6 +7,25 @@ import (
 	"os"
 	"testing"
 )
+
+type envVars struct {
+	lang    string
+	lcall   string
+	lcctype string
+}
+
+func saveEnv() envVars {
+	return envVars{
+		lang:    os.Getenv("LANG"),
+		lcall:   os.Getenv("LC_ALL"),
+		lcctype: os.Getenv("LC_CTYPE"),
+	}
+}
+func restoreEnv(env *envVars) {
+	os.Setenv("LANG", env.lang)
+	os.Setenv("LC_ALL", env.lcall)
+	os.Setenv("LC_CTYPE", env.lcctype)
+}
 
 func TestIsEastAsian(t *testing.T) {
 	testcases := []struct {
@@ -29,8 +47,9 @@ func TestIsEastAsian(t *testing.T) {
 }
 
 func TestIsEastAsianLCCTYPE(t *testing.T) {
-	lcctype := os.Getenv("LC_CTYPE")
-	defer os.Setenv("LC_CTYPE", lcctype)
+	env := saveEnv()
+	defer restoreEnv(&env)
+	os.Setenv("LC_ALL", "")
 
 	testcases := []struct {
 		lcctype string
@@ -52,11 +71,9 @@ func TestIsEastAsianLCCTYPE(t *testing.T) {
 }
 
 func TestIsEastAsianLANG(t *testing.T) {
-	lcctype := os.Getenv("LC_CTYPE")
-	defer os.Setenv("LC_CTYPE", lcctype)
-	lang := os.Getenv("LANG")
-	defer os.Setenv("LANG", lang)
-
+	env := saveEnv()
+	defer restoreEnv(&env)
+	os.Setenv("LC_ALL", "")
 	os.Setenv("LC_CTYPE", "")
 
 	testcases := []struct {

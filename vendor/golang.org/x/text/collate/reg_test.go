@@ -10,7 +10,6 @@ import (
 	"bytes"
 	"flag"
 	"io"
-	"io/ioutil"
 	"log"
 	"path"
 	"regexp"
@@ -28,7 +27,7 @@ var long = flag.Bool("long", false,
 	"run time-consuming tests, such as tests that fetch data online")
 
 // This regression test runs tests for the test files in CollationTest.zip
-// (taken from http://www.unicode.org/Public/UCA/<gen.UnicodeVersion()>/).
+// (taken from https://www.unicode.org/Public/UCA/<gen.UnicodeVersion()>/).
 //
 // The test files have the following form:
 // # header
@@ -68,7 +67,7 @@ func Error(e error) {
 }
 
 // parseUCA parses a Default Unicode Collation Element Table of the format
-// specified in http://www.unicode.org/reports/tr10/#File_Format.
+// specified in https://www.unicode.org/reports/tr10/#File_Format.
 // It returns the variable top.
 func parseUCA(builder *build.Builder) {
 	r := gen.OpenUnicodeFile("UCA", "", "allkeys.txt")
@@ -133,7 +132,7 @@ func convHex(line int, s string) int {
 
 func loadTestData() []Test {
 	f := gen.OpenUnicodeFile("UCA", "", "CollationTest.zip")
-	buffer, err := ioutil.ReadAll(f)
+	buffer, err := io.ReadAll(f)
 	f.Close()
 	Error(err)
 	archive, err := zip.NewReader(bytes.NewReader(buffer), int64(len(buffer)))

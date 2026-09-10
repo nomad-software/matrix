@@ -46,6 +46,8 @@ func (t *Term) Draw(m *matrix.Matrix) {
 			if !glyph.IsEmpty() {
 				if glyph.IsHighlighted() {
 					t.tcell.SetContent(x, y, char.Get(glyph.Index(), t.ASCII), nil, tcell.StyleDefault.Foreground(tcell.ColorWhite))
+				} else if glyph.IsHighlightFading() {
+					t.tcell.SetContent(x, y, char.Get(glyph.Index(), t.ASCII), nil, tcell.StyleDefault.Foreground(tcell.ColorLime))
 				} else {
 					t.tcell.SetContent(x, y, char.Get(glyph.Index(), t.ASCII), nil, tcell.StyleDefault.Foreground(tcell.ColorGreen))
 				}

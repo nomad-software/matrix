@@ -11,7 +11,6 @@
 //     go run linux/mkall.go <linux_dir> <glibc_dir>
 
 //go:build ignore
-// +build ignore
 
 package main
 
@@ -24,7 +23,6 @@ import (
 	"fmt"
 	"go/build/constraint"
 	"io"
-	"io/ioutil"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -42,7 +40,7 @@ const TempDir = "/tmp"
 
 const GOOS = "linux"       // Only for Linux targets
 const BuildArch = "amd64"  // Must be built on this architecture
-const MinKernel = "2.6.23" // https://golang.org/doc/install#requirements
+const MinKernel = "2.6.32" // https://go.dev/wiki/MinimumRequirements#linuxlinux
 
 type target struct {
 	GoArch     string // Architecture name according to Go
@@ -52,7 +50,6 @@ type target struct {
 	SignedChar bool   // Is -fsigned-char needed (default no)
 	Bits       int
 	env        []string
-	stderrBuf  bytes.Buffer
 	compiler   string
 }
 
@@ -253,20 +250,33 @@ func main() {
 	}
 }
 
-func (t *target) printAndResetBuilder() {
-	if t.stderrBuf.Len() > 0 {
-		for _, l := range bytes.Split(t.stderrBuf.Bytes(), []byte{'\n'}) {
-			fmt.Printf("arch %s: stderr: %s\n", t.GoArch, l)
-		}
-		t.stderrBuf.Reset()
-	}
-}
-
 // Makes an exec.Cmd with Stderr attached to the target string Builder, and target environment
 func (t *target) makeCommand(name string, args ...string) *exec.Cmd {
 	cmd := exec.Command(name, args...)
 	cmd.Env = t.env
-	cmd.Stderr = &t.stderrBuf
+
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "arch %s: StderrPipe failed: %v\n", t.GoArch, err)
+		cmd.Stderr = os.Stderr
+	} else {
+		go func() {
+			defer stderr.Close()
+			buf := bufio.NewReader(stderr)
+			for {
+				s, err := buf.ReadString('\n')
+				if err != nil {
+					if err != io.EOF {
+						fmt.Fprintf(os.Stderr, "arch %s: reading from stderr pipe failed: %v\n", t.GoArch, err)
+					}
+					return
+				}
+				// Note that s has a trailing newline.
+				fmt.Printf("arch %s: %s", t.GoArch, s)
+			}
+		}()
+	}
+
 	return cmd
 }
 
@@ -309,8 +319,6 @@ func (t *target) commandFormatOutput(formatter string, outputFile string,
 			return err
 		}
 	}
-
-	defer t.printAndResetBuilder()
 
 	// mainCmd | fmtCmd > outputFile
 	if fmtCmd.Stdin, err = mainCmd.StdoutPipe(); err != nil {
@@ -393,8 +401,6 @@ func (t *target) generateFiles() error {
 
 // Create the Linux, glibc and ABI (C compiler convention) headers in the include directory.
 func (t *target) makeHeaders() error {
-	defer t.printAndResetBuilder()
-
 	// Make the Linux headers we need for this architecture
 	linuxMake := t.makeCommand("make", "headers_install", "ARCH="+t.LinuxArch, "INSTALL_HDR_PATH="+filepath.Join(TempDir, t.GoArch))
 	linuxMake.Dir = LinuxDir
@@ -411,7 +417,30 @@ func (t *target) makeHeaders() error {
 
 	// Make the glibc headers we need for this architecture
 	confScript := filepath.Join(GlibcDir, "configure")
-	glibcConf := t.makeCommand(confScript, "--prefix="+filepath.Join(TempDir, t.GoArch), "--host="+t.GNUArch, "--enable-kernel="+MinKernel)
+	glibcArgs := []string{"--prefix=" + filepath.Join(TempDir, t.GoArch), "--host=" + t.GNUArch}
+	if t.LinuxArch == "loongarch" {
+		// The minimum version requirement of the Loongarch for the kernel in glibc
+		// is 5.19, if --enable-kernel is less than 5.19, glibc handles errors
+		glibcArgs = append(glibcArgs, "--enable-kernel=5.19.0")
+	} else {
+		glibcArgs = append(glibcArgs, "--enable-kernel="+MinKernel)
+	}
+
+	// CET is not supported on x86 but glibc 2.39 enables it by default, it was later reverted.
+	// See https://sourceware.org/git/?p=glibc.git;a=commit;h=25f1e16ef03a6a8fb1701c4647d46c564480d88c
+	if t.LinuxArch == "x86" {
+		glibcArgs = append(glibcArgs, "--enable-cet=no")
+	}
+
+	// glibc 2.38 requires libmvec to be disabled explicitly in aarch64
+	// since the installed compiler does not have SVE ACLE.
+	// See https://sourceware.org/pipermail/libc-alpha/2023-May/147829.html
+	if t.LinuxArch == "arm64" {
+		glibcArgs = append(glibcArgs, "--disable-mathvec")
+	}
+
+	glibcConf := t.makeCommand(confScript, glibcArgs...)
+
 	glibcConf.Dir = buildDir
 	if err := glibcConf.Run(); err != nil {
 		return err
@@ -481,7 +510,6 @@ func (t *target) buildELF(cc, src, path string) (*elf.File, error) {
 	ccCmd := t.makeCommand(cc, "-o", path, "-gdwarf", "-x", "c", "-c", "-")
 	ccCmd.Stdin = strings.NewReader(src)
 	ccCmd.Stdout = os.Stdout
-	defer t.printAndResetBuilder()
 	if err := ccCmd.Run(); err != nil {
 		return nil, fmt.Errorf("compiler error: %v", err)
 	}
@@ -621,11 +649,7 @@ func (t *target) matchesMksyscallFile(file string) (bool, error) {
 	s := bufio.NewScanner(f)
 	for s.Scan() {
 		// Keep scanning until a valid constraint is found or we hit EOF.
-		//
-		// This only supports single-line constraints such as the //go:build
-		// convention used in Go 1.17+. Because the old //+build convention
-		// (which may have multiple lines of build tags) is being deprecated,
-		// we don't bother looking for multi-line constraints.
+		// This is sufficient for the single-line //go:build constraints.
 		if expr, err = constraint.Parse(s.Text()); err == nil {
 			found = true
 			break
@@ -744,8 +768,6 @@ func generatePtracePair(arch1, arch2, archName string) error {
 	fmt.Fprintf(buf, "// Code generated by linux/mkall.go generatePtracePair(%q, %q). DO NOT EDIT.\n", arch1, arch2)
 	fmt.Fprintf(buf, "\n")
 	fmt.Fprintf(buf, "//go:build linux && (%s || %s)\n", arch1, arch2)
-	fmt.Fprintf(buf, "// +build linux\n")
-	fmt.Fprintf(buf, "// +build %s %s\n", arch1, arch2)
 	fmt.Fprintf(buf, "\n")
 	fmt.Fprintf(buf, "package unix\n")
 	fmt.Fprintf(buf, "\n")
@@ -781,13 +803,13 @@ func generatePtraceRegSet(arch string) error {
 	fmt.Fprintf(buf, "// PtraceGetRegSet%s fetches the registers used by %s binaries.\n", uarch, arch)
 	fmt.Fprintf(buf, "func PtraceGetRegSet%s(pid, addr int, regsout *PtraceRegs%s) error {\n", uarch, uarch)
 	fmt.Fprintf(buf, "\tiovec := Iovec{(*byte)(unsafe.Pointer(regsout)), uint64(unsafe.Sizeof(*regsout))}\n")
-	fmt.Fprintf(buf, "\treturn ptrace(PTRACE_GETREGSET, pid, uintptr(addr), uintptr(unsafe.Pointer(&iovec)))\n")
+	fmt.Fprintf(buf, "\treturn ptracePtr(PTRACE_GETREGSET, pid, uintptr(addr), unsafe.Pointer(&iovec))\n")
 	fmt.Fprintf(buf, "}\n")
 	fmt.Fprintf(buf, "\n")
 	fmt.Fprintf(buf, "// PtraceSetRegSet%s sets the registers used by %s binaries.\n", uarch, arch)
 	fmt.Fprintf(buf, "func PtraceSetRegSet%s(pid, addr int, regs *PtraceRegs%s) error {\n", uarch, uarch)
 	fmt.Fprintf(buf, "\tiovec := Iovec{(*byte)(unsafe.Pointer(regs)), uint64(unsafe.Sizeof(*regs))}\n")
-	fmt.Fprintf(buf, "\treturn ptrace(PTRACE_SETREGSET, pid, uintptr(addr), uintptr(unsafe.Pointer(&iovec)))\n")
+	fmt.Fprintf(buf, "\treturn ptracePtr(PTRACE_SETREGSET, pid, uintptr(addr), unsafe.Pointer(&iovec))\n")
 	fmt.Fprintf(buf, "}\n")
 	if err := buf.Flush(); err != nil {
 		return err
@@ -801,7 +823,7 @@ func generatePtraceRegSet(arch string) error {
 // ptraceDef returns the definition of PtraceRegs for arch.
 func ptraceDef(arch string) (string, error) {
 	filename := fmt.Sprintf("ztypes_linux_%s.go", arch)
-	data, err := ioutil.ReadFile(filename)
+	data, err := os.ReadFile(filename)
 	if err != nil {
 		return "", fmt.Errorf("reading %s: %v", filename, err)
 	}
@@ -825,12 +847,12 @@ func writeOnePtrace(w io.Writer, arch, def string) {
 	fmt.Fprintf(w, "\n")
 	fmt.Fprintf(w, "// PtraceGetRegs%s fetches the registers used by %s binaries.\n", uarch, arch)
 	fmt.Fprintf(w, "func PtraceGetRegs%s(pid int, regsout *PtraceRegs%s) error {\n", uarch, uarch)
-	fmt.Fprintf(w, "\treturn ptrace(PTRACE_GETREGS, pid, 0, uintptr(unsafe.Pointer(regsout)))\n")
+	fmt.Fprintf(w, "\treturn ptracePtr(PTRACE_GETREGS, pid, 0, unsafe.Pointer(regsout))\n")
 	fmt.Fprintf(w, "}\n")
 	fmt.Fprintf(w, "\n")
 	fmt.Fprintf(w, "// PtraceSetRegs%s sets the registers used by %s binaries.\n", uarch, arch)
 	fmt.Fprintf(w, "func PtraceSetRegs%s(pid int, regs *PtraceRegs%s) error {\n", uarch, uarch)
-	fmt.Fprintf(w, "\treturn ptrace(PTRACE_SETREGS, pid, 0, uintptr(unsafe.Pointer(regs)))\n")
+	fmt.Fprintf(w, "\treturn ptracePtr(PTRACE_SETREGS, pid, 0, unsafe.Pointer(regs))\n")
 	fmt.Fprintf(w, "}\n")
 }
 

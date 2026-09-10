@@ -9,7 +9,6 @@ import (
 	"testing"
 	"unicode"
 
-	"golang.org/x/text/internal/testtext"
 	"golang.org/x/text/language"
 	"golang.org/x/text/transform"
 	"golang.org/x/text/unicode/norm"
@@ -81,7 +80,7 @@ func TestCaseProperties(t *testing.T) {
 		}
 		// New letters may change case types, but existing case pairings should
 		// not change. See Case Pair Stability in
-		// http://unicode.org/policies/stability_policy.html.
+		// https://unicode.org/policies/stability_policy.html.
 		if rf := unicode.SimpleFold(r); rf != r && unicode.In(rf, assigned) {
 			if got, want := c.info.isCased(), propCased(r); got != want {
 				t.Errorf("cased(%U): got %v; want %v (%x)", r, got, want, c.info)
@@ -213,7 +212,8 @@ func TestCCC(t *testing.T) {
 
 func TestWordBreaks(t *testing.T) {
 	for _, tt := range breakTest {
-		testtext.Run(t, tt, func(t *testing.T) {
+		desc := norm.NFC.String(tt)
+		t.Run(desc, func(t *testing.T) {
 			parts := strings.Split(tt, "|")
 			want := ""
 			for _, s := range parts {

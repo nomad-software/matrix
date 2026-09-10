@@ -2,11 +2,15 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// +build ignore
+//go:build ignore
 
 package main
 
-import "unicode/utf8"
+import (
+	"unicode/utf8"
+
+	"golang.org/x/text/internal/language/compact"
+)
 
 // A system identifies a CLDR numbering system.
 type system byte
@@ -49,7 +53,7 @@ const hasNonLatnMask = 0x8000
 type symOffset uint16
 
 type altSymData struct {
-	compactTag uint16
+	compactTag compact.ID
 	symIndex   symOffset
 	system     system
 }

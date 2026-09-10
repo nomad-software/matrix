@@ -138,23 +138,29 @@ func (p *Printer) Printf(key Reference, a ...interface{}) (n int, err error) {
 
 func lookupAndFormat(p *printer, r Reference, a []interface{}) {
 	p.fmt.Reset(a)
-	var id, msg string
 	switch v := r.(type) {
 	case string:
-		id, msg = v, v
+		if p.catContext.Execute(v) == catalog.ErrNotFound {
+			p.Render(v)
+			return
+		}
 	case key:
-		id, msg = v.id, v.fallback
+		if p.catContext.Execute(v.id) == catalog.ErrNotFound &&
+			p.catContext.Execute(v.fallback) == catalog.ErrNotFound {
+			p.Render(v.fallback)
+			return
+		}
 	default:
 		panic("key argument is not a Reference")
 	}
-
-	if p.catContext.Execute(id) == catalog.ErrNotFound {
-		if p.catContext.Execute(msg) == catalog.ErrNotFound {
-			p.Render(msg)
-			return
-		}
-	}
 }
+
+type rawPrinter struct {
+	p *printer
+}
+
+func (p rawPrinter) Render(msg string)     { p.p.WriteString(msg) }
+func (p rawPrinter) Arg(i int) interface{} { return nil }
 
 // Arg implements catmsg.Renderer.
 func (p *printer) Arg(i int) interface{} { // TODO, also return "ok" bool

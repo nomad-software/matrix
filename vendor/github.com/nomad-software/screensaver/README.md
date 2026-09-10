@@ -4,11 +4,13 @@ A simple Linux screensaver framework
 
 ## Prerequisites
 
-* A [X11](https://www.x.org/wiki/) based Linux distribution to run the launcher.
-    * The launcher does not support [Wayland](https://wayland.freedesktop.org/) yet.
-* A working Go and C compiler and installed Ebiten Linux dependencies.
+* This is a Linux only screensaver framework.
+* To run the launcher you will need to use [Gnome](https://www.gnome.org/) as your desktop environment.
+    * This is because the input detection is currently handled by [Mutter](https://mutter.gnome.org/).
+    * [X11](https://www.x.org/wiki/) and [Wayland](https://wayland.freedesktop.org/) are supported.
+* A working Go and C compiler and installed Raylib dependencies.
     * https://go.dev
-    * https://ebitengine.org/en/documents/install.html?os=linux
+    * https://github.com/gen2brain/raylib-go#requirements
 
 ## How it works
 
@@ -26,8 +28,19 @@ Just run the `install.sh` script. This will compile and install the various bina
 
 ## Add to startup
 
-It differs between different Linux distributions but just add the launcher to
-startup with the necessary options.
+Use [Tweaks](https://wiki.gnome.org/Apps/Tweaks) to add to start-up applications.
+
+### Application file
+
+You may need to create a desktop launcher to be used with newer version of Tweaks.
+Create a file containing the following and place in `~/local/share/applications`.
+
+```
+[Desktop Entry]
+Type=Application
+Name=Screensaver Launcher
+Exec=screensaver-launcher -saver screensaver-digital-rain -timer 15m
+```
 
 ### Example
 
@@ -49,10 +62,20 @@ You can use the command tool to send commands to the launcher to control its beh
 
 ## Savers
 
-### `screensaver-digital-rain`
+### `screensaver-connection-machine`
+![](screen/saver/connection_machine/assets/images/preview.gif)
 
-![](screen/saver/digital_rain/assets/preview.gif)
+### `screensaver-digital-rain`
+![](screen/saver/digital_rain/assets/images/preview.gif)
 
 ### `screensaver-game-of-life`
+![](screen/saver/game_of_life/assets/images/preview.gif)
 
-![](screen/saver/game_of_life/assets/preview.gif)
+### `screensaver-shader-fire`
+![](screen/saver/shader_fire/assets/images/preview.png)
+
+### `screensaver-shader-reef`
+![](screen/saver/shader_reef/assets/images/preview.png)
+
+### `screensaver-shader-star-grid`
+![](screen/saver/shader_star_grid/assets/images/preview.png)

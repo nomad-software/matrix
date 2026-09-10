@@ -21,7 +21,7 @@ import (
 var testLevels = flag.Bool("levels", false, "enable testing of levels")
 
 // TestBidiCore performs the tests in BidiTest.txt.
-// See http://www.unicode.org/Public/UCD/latest/ucd/BidiTest.txt.
+// See https://www.unicode.org/Public/UCD/latest/ucd/BidiTest.txt.
 func TestBidiCore(t *testing.T) {
 	testtext.SkipIfNotLong(t)
 
@@ -55,7 +55,10 @@ func TestBidiCore(t *testing.T) {
 				continue
 			}
 			lev := level(int(i) - 1)
-			par := newParagraph(types, pairTypes, pairValues, lev)
+			par, err := newParagraph(types, pairTypes, pairValues, lev)
+			if err != nil {
+				t.Error(err)
+			}
 
 			if *testLevels {
 				levels := par.getLevels([]int{len(types)})
@@ -93,7 +96,7 @@ var removeClasses = map[Class]bool{
 }
 
 // TestBidiCharacters performs the tests in BidiCharacterTest.txt.
-// See http://www.unicode.org/Public/UCD/latest/ucd/BidiCharacterTest.txt
+// See https://www.unicode.org/Public/UCD/latest/ucd/BidiCharacterTest.txt
 func TestBidiCharacters(t *testing.T) {
 	testtext.SkipIfNotLong(t)
 
@@ -142,7 +145,10 @@ func TestBidiCharacters(t *testing.T) {
 				pairValues = append(pairValues, p.reverseBracket(r))
 			}
 		}
-		par := newParagraph(types, pairTypes, pairValues, parLevel)
+		par, err := newParagraph(types, pairTypes, pairValues, parLevel)
+		if err != nil {
+			t.Error(err)
+		}
 
 		// Test results:
 		if got := par.embeddingLevel; got != wantLevel {
@@ -195,7 +201,7 @@ func reorder(r []rune, order []int) string {
 }
 
 // bidiClass names and codes taken from class "bc" in
-// http://www.unicode.org/Public/8.0.0/ucd/PropertyValueAliases.txt
+// https://www.unicode.org/Public/8.0.0/ucd/PropertyValueAliases.txt
 var bidiClass = map[string]Class{
 	"AL":  AL,  // classArabicLetter,
 	"AN":  AN,  // classArabicNumber,

@@ -27,7 +27,7 @@ const (
 	// cldrIndex is a Unicode-reserved sentinel value used to mark the start
 	// of a grouping within an index.
 	// We ignore any rule that starts with this rune.
-	// See http://unicode.org/reports/tr35/#Collation_Elements for details.
+	// See https://unicode.org/reports/tr35/#Collation_Elements for details.
 	cldrIndex = "\uFDD0"
 
 	// specialAnchor is the format in which to represent logical reset positions,
@@ -51,7 +51,7 @@ func (c Collation) Process(p RuleProcessor) (err error) {
 }
 
 // processRules parses rules in the Collation Rule Syntax defined in
-// http://www.unicode.org/reports/tr35/tr35-collation.html#Collation_Tailorings.
+// https://www.unicode.org/reports/tr35/tr35-collation.html#Collation_Tailorings.
 func processRules(p RuleProcessor, s string) (err error) {
 	chk := func(s string, e error) string {
 		if err == nil {
@@ -98,9 +98,13 @@ func processRules(p RuleProcessor, s string) (err error) {
 }
 
 // parseSpecialAnchor parses the anchor syntax which is either of the form
-//    ['before' <level>] <anchor>
+//
+//	['before' <level>] <anchor>
+//
 // or
-//    [<label>]
+//
+//	[<label>]
+//
 // The starting should already be consumed.
 func parseSpecialAnchor(p RuleProcessor, s string) (tail string, err error) {
 	i := strings.IndexByte(s, ']')
@@ -225,7 +229,7 @@ func skipSpace(s string) string {
 	return strings.TrimLeftFunc(s, unicode.IsSpace)
 }
 
-// consumes returns whether the next byte is ch. If so, it gobbles it by
+// consume returns whether the next byte is ch. If so, it gobbles it by
 // updating s.
 func consume(s *string, ch byte) (ok bool) {
 	if *s == "" || (*s)[0] != ch {

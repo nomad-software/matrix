@@ -3,7 +3,6 @@
 // license that can be found in the LICENSE file.
 
 //go:build ignore
-// +build ignore
 
 /*
 Input to cgo -godefs.  See README.md
@@ -39,8 +38,10 @@ package unix
 #include <sys/select.h>
 #include <sys/signal.h>
 #include <sys/socket.h>
+#include <sys/sockio.h>
 #include <sys/stat.h>
 #include <sys/statvfs.h>
+#include <sys/stropts.h>
 #include <sys/time.h>
 #include <sys/times.h>
 #include <sys/types.h>
@@ -74,12 +75,12 @@ struct sockaddr_any {
 	char pad[sizeof(union sockaddr_all) - sizeof(struct sockaddr)];
 };
 
-// go_iovec is used to get *byte as the base address for Iovec.
-struct goIovec {
-	void*  iov_base;
-	size_t iov_len;
-};
-
+// Solaris and the major illumos distributions ship a 3rd party tun/tap driver
+// from https://github.com/kaizawa/tuntap
+// It supports a pair of IOCTLs defined at
+// https://github.com/kaizawa/tuntap/blob/master/if_tun.h#L91-L93
+#define TUNNEWPPA	(('T'<<16) | 0x0001)
+#define TUNSETPPA	(('T'<<16) | 0x0002)
 */
 import "C"
 
@@ -156,7 +157,7 @@ type _Socklen C.socklen_t
 
 type Linger C.struct_linger
 
-type Iovec C.struct_goIovec
+type Iovec C.struct_iovec
 
 type IPMreq C.struct_ip_mreq
 
@@ -306,3 +307,28 @@ const (
 	MOUNTEDOVER        = C.MOUNTEDOVER
 	FILE_EXCEPTION     = C.FILE_EXCEPTION
 )
+
+// STREAMS and Tun
+
+const (
+	TUNNEWPPA = C.TUNNEWPPA
+	TUNSETPPA = C.TUNSETPPA
+
+	// sys/stropts.h:
+	I_STR     = C.I_STR
+	I_POP     = C.I_POP
+	I_PUSH    = C.I_PUSH
+	I_LINK    = C.I_LINK
+	I_UNLINK  = C.I_UNLINK
+	I_PLINK   = C.I_PLINK
+	I_PUNLINK = C.I_PUNLINK
+
+	// sys/sockio.h:
+	IF_UNITSEL = C.IF_UNITSEL
+)
+
+type strbuf C.struct_strbuf
+
+type Strioctl C.struct_strioctl
+
+type Lifreq C.struct_lifreq

@@ -96,7 +96,7 @@ func (g *Colony) Incubate() {
 			// This is not a standard rule but we need it to prevent the colony
 			// from dying because this is a screensaver and we have to keep
 			// things moving on-screen.
-			if neighbours == 1 && rand.Intn(1000) == 500 {
+			if neighbours == 1 && rand.Intn(100) == 1 {
 				g.substrate[x][y] = Alive
 			}
 		}
@@ -113,7 +113,8 @@ func (g *Colony) View() [][]rune {
 
 // Seed randomises the game cells.
 func (g *Colony) Seed() {
-	rand.Seed(time.Now().Unix())
+	rand.New(rand.NewSource(time.Now().Unix()))
+
 	for i := 0; i < (g.width * g.height / 4); i++ {
 		g.output[rand.Intn(g.width)][rand.Intn(g.height)] = Alive
 	}
